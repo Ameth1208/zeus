@@ -25,7 +25,7 @@ const ACCOUNT: &str = "gateway";
 
 /// Panel size. Matches `PANEL_W` / `PANEL_H` in src/island/layout.ts.
 const PANEL_W: f64 = 720.0;
-const PANEL_H: f64 = 360.0;
+const PANEL_H: f64 = 380.0;
 
 /// Extra pixels around the island that still count as "over the island", so a
 /// click just past the edge does not fall through to the desktop.
@@ -43,12 +43,52 @@ struct Credentials {
     token: String,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
+#[repr(C)]
+#[derive(Default, Clone, Copy)]
+struct WinPoint {
+    x: i32,
+    y: i32,
+}
+
+#[link(name = "user32")]
+extern "system" {
+    fn GetCursorPos(lpPoint: *mut WinPoint) -> i32;
+    fn GetAsyncKeyState(vKey: i32) -> i16;
+    fn SetForegroundWindow(hWnd: isize) -> i32;
+}
+
+fn cursor_physical() -> Option<(f64, f64)> {
+    let mut pt = WinPoint::default();
+    unsafe {
+        if GetCursorPos(&mut pt) != 0 {
+            Some((pt.x as f64, pt.y as f64))
+        } else {
+            None
+        }
+    }
+}
+
+fn is_left_button_down() -> bool {
+    unsafe { (GetAsyncKeyState(0x01) as u16 & 0x8000) != 0 }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 struct IslandRect {
     x: f64,
     y: f64,
     w: f64,
     h: f64,
+}
+
+impl Default for IslandRect {
+    fn default() -> Self {
+        Self {
+            x: (PANEL_W - 288.0) / 2.0,
+            y: 0.0,
+            w: 288.0,
+            h: 32.0,
+        }
+    }
 }
 
 #[tauri::command]
@@ -99,30 +139,41 @@ impl IslandState {
 }
 
 #[tauri::command]
-fn set_island_rect(state: tauri::State<'_, IslandState>, rect: IslandRect) {
+fn set_island_rect(state: tauri::State<'_, Arc<IslandState>>, rect: IslandRect) {
+    log_line(&format!("set_island_rect: w={} h={} x={} y={}", rect.w, rect.h, rect.x, rect.y));
     state.push(rect);
 }
 
 /// True when the cursor sits over the island, plus its margin.
 fn cursor_over_island(window: &WebviewWindow, island: &IslandRect) -> bool {
-    if island.h <= 0.0 || island.w <= 0.0 {
-        return false;
-    }
-    let (Ok(cursor), Ok(Some(monitor))) = (window.cursor_position(), window.current_monitor())
-    else {
-        // No cursor or no monitor: stay interactive rather than trapping the
-        // user behind an invisible click-through panel.
+    let Ok(origin) = window.outer_position() else {
         return true;
     };
-    let scale = monitor.scale_factor();
-    let cx = cursor.x / scale;
-    let cy = cursor.y / scale;
-    // The island is centred horizontally inside the panel.
+    let scale = window.scale_factor().unwrap_or(1.0);
+    let Some((cx, cy)) = cursor_physical() else {
+        return true;
+    };
+    let x = (cx - origin.x as f64) / scale;
+    let y = (cy - origin.y as f64) / scale;
+
     let left = (PANEL_W - island.w) / 2.0;
-    cx >= left - HIT_MARGIN
-        && cx <= left + island.w + HIT_MARGIN
-        && cy >= island.y - HIT_MARGIN
-        && cy <= island.y + island.h + HIT_MARGIN
+
+    // Wake strip at the top-centre (240px wide, 14px high)
+    let over_wake = x >= (PANEL_W - 240.0) / 2.0
+        && x <= (PANEL_W + 240.0) / 2.0
+        && y >= 0.0
+        && y <= 14.0;
+
+    let on_island = island.w > 0.0
+        && island.h > 0.0
+        && x >= left - HIT_MARGIN
+        && x <= left + island.w + HIT_MARGIN
+        && y >= island.y - HIT_MARGIN
+        && y <= island.y + island.h + HIT_MARGIN;
+
+    let is_down = is_left_button_down();
+
+    on_island || over_wake || is_down
 }
 
 /// Pins the panel to the top-centre of its monitor.
@@ -180,6 +231,17 @@ fn show_island(window: WebviewWindow) {
     let _ = window.show();
     let _ = window.unminimize();
     log_line("show_island");
+}
+
+#[tauri::command]
+fn focus_window(window: WebviewWindow) {
+    let _ = window.set_focus();
+    if let Ok(hwnd) = window.hwnd() {
+        unsafe {
+            let _ = SetForegroundWindow(hwnd.0 as isize);
+        }
+    }
+    log_line("focus_window");
 }
 
 /// Appends a diagnostic line so the webview's state can be inspected from
@@ -251,6 +313,7 @@ pub fn run() {
             set_island_rect,
             hide_island,
             show_island,
+            focus_window,
             log_diag,
             window_geometry,
             quit,
@@ -262,9 +325,8 @@ pub fn run() {
             let hit_test_state = app.state::<Arc<IslandState>>().inner().clone();
 
             if let Some(window) = app.get_webview_window("main") {
-                // Start click-through: the island has no geometry yet.
-                let _ = window.set_ignore_cursor_events(true);
                 place_top_centre(&window);
+                let _ = window.set_ignore_cursor_events(false);
                 log_line("setup complete");
             }
 
