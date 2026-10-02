@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zeus.local/schema/zeus-action.schema.json",
+  "title": "Zeus Agent Action",
+  "type": "object",
+  "required": ["session_id", "agent_id", "kind"],
+  "properties": {
+    "id": {"type": "string"},
+    "created_at": {"type": "string", "format": "date-time"},
+    "session_id": {"type": "string", "minLength": 1},
+    "agent_id": {"type": "string", "minLength": 1},
+    "kind": {"enum": ["approve", "deny", "message", "stop", "pause", "resume"]},
+    "payload": {"type": "object", "additionalProperties": true}
+  },
+  "additionalProperties": false
+}

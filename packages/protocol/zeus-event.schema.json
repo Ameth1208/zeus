@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zeus.local/protocol/zeus-event.schema.json",
+  "title": "Zeus Agent Event",
+  "type": "object",
+  "required": ["session_id", "agent_id", "runtime", "type"],
+  "properties": {
+    "id": {"type": "string"},
+    "timestamp": {"type": "string", "format": "date-time"},
+    "session_id": {"type": "string", "minLength": 1},
+    "agent_id": {"type": "string", "minLength": 1},
+    "runtime": {"type": "string", "minLength": 1},
+    "provider": {"type": "string"},
+    "model": {"type": "string"},
+    "project": {"type": "string"},
+    "machine_id": {"type": "string"},
+    "machine_name": {"type": "string"},
+    "type": {
+      "type": "string",
+      "enum": [
+        "session.started", "thinking", "tool.started", "tool.completed", "tool.failed",
+        "file.read", "file.changed", "command.started", "command.completed",
+        "permission.requested", "permission.resolved", "message", "heartbeat",
+        "agent.interrupted", "session.completed", "session.failed", "session.stopped"
+      ]
+    },
+    "message": {"type": "string"},
+    "tool": {"type": "string"},
+    "path": {"type": "string"},
+    "command": {"type": "string"},
+    "metadata": {"type": "object", "additionalProperties": true}
+  },
+  "additionalProperties": false
+}
