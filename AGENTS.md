@@ -1,0 +1,164 @@
+# AGENTS.md
+
+Zeus — an agent control plane. A Go gateway aggregates AI-agent events (Codex,
+Claude Code, Antigravity, generic adapters) and surfaces them in a Flutter mobile
+app and a Tauri desktop island. Derived from `Louis-CFM/coucou` (MIT).
+
+There are **no agent rule files** in this repo (`.cursorrules`, `.cursor/rules/`,
+`.github/copilot-instructions.md` are all absent). This file is the single source.
+
+## Layout
+
+```
+gateway/           Go 1.23 · HTTP server + session store
+apps/mobile/       Flutter + Riverpod · Android/iOS
+apps/desktop-windows/  Tauri 2 + TypeScript · Windows/Linux island
+apps/desktop-macos/    SwiftUI · macOS island (build needs xcodegen)
+adapters/          Python runtime hooks (one dir per agent runtime)
+shared/ packages/  Cross-cutting assets and contracts
+scripts/           Canonical build/test entry points
+tools/             Asset pipelines (e.g. normalize_zeus_frames.py)
+```
+
+## Commands
+
+Run from the repo root unless noted. `./scripts/test.sh` is the gate CI uses.
+
+**Everything (gateway gofmt + go test + python syntax check):**
+```bash
+./scripts/test.sh
+```
+
+**Gateway — single test** (the only layer with real Go coverage):
+```bash
+cd gateway
+go test ./internal -run TestSessionPersistenceAndPermissionLifecycle -v
+go test ./internal -run 'TestAuth' -v      # regex works
+go test ./internal -run 'TestX' -count=1    # bypass cache
+```
+
+**Gateway — format / vet / build all platforms:**
+```bash
+cd gateway && gofmt -w ./cmd ./internal && go vet ./...
+./scripts/build-gateway.sh     # cross-compiles 5 targets into dist/gateway + SHA256SUMS
+./scripts/smoke-gateway.sh     # boots a real binary on a random port, curls it
+```
+
+**Mobile:**
+```bash
+cd apps/mobile
+flutter pub get
+dart run build_runner build --delete-conflicting-outputs   # regenerates lib/gen/assets.gen.dart
+flutter analyze                 # linter + type errors
+flutter test                    # all tests
+flutter test test/zeus_session_test.dart                      # single file
+flutter test --plain-name 'parses pending permission metadata' # single test
+flutter run -d <device-id>
+```
+
+**Desktop:**
+```bash
+cd apps/desktop-windows
+npx tsc --noEmit      # typecheck only, fastest gate
+npm run build         # tsc && vite build
+npm run tauri build   # release exe + msi + nsis
+```
+
+### Windows caveats — read before building the desktop app
+
+- `npm run tauri dev` **does not compile** on this machine: `ld.exe: error: export
+  ordinal too large` from mingw-w64 building a `cdylib` in debug. Use
+  `npm run tauri build`. Do not "fix" this by changing `crate-type`.
+- A `target/` directory created under the old repo path `Personal Lib/...` will
+  make `tauri-build` fail with `failed to read plugin permissions`, because every
+  cached artifact bakes in that old path. Fix: `rm -rf src-tauri/target/release`.
+- Kill `zeus-desktop.exe` before rebuilding, or the linker gets `Acceso denegado`.
+- `tauri icon <png> -o src-tauri/icons` regenerates the icon set. If a bundle step
+  reports `Couldn't find a .ico icon`, the ICO is single-size or `bundle.icon` is
+  missing from `tauri.conf.json` — both must be fixed, not worked around.
+
+## Go style (`gateway/`)
+
+- `gofmt` is authoritative; `test.sh` rewrites files in place, so run it before committing.
+- Errors are values, never panics. `errors.New` for static cases, `fmt.Errorf` with
+  `%w` when wrapping. Messages are lowercase, no trailing punctuation.
+- Exported types carry doc comments; JSON tags are `snake_case` (`json:"agent_id"`).
+- Every type with mutable state guards it with a `sync.RWMutex` and takes the lock
+  in every method. `SessionStore` is the reference implementation.
+- Unexported helpers when they are package-internal (`hasCapability`, `truncate`).
+- Tests are `TestXxx` in `package internal` (internal tests, not `_test` package),
+  use `t.TempDir()`, and assert with `t.Fatalf` and `%#v` for struct dumps.
+  One test covers a lifecycle end-to-end rather than many narrow ones.
+
+## Dart style (`apps/mobile/`)
+
+- Lints come from `package:flutter_lints` plus two local rules in
+  `analysis_options.yaml`: **`prefer_single_quotes`** and **`use_super_parameters`**.
+  Both are errors — match them rather than reformatting after the fact.
+- Relative imports within `lib/`, package imports for dependencies
+  (`package:flutter_riverpod/flutter_riverpod.dart`).
+- `const` constructors everywhere a widget or model allows it.
+- Models are immutable with a `factory X.fromJson`. Expose derived state as getters
+  (`bool get needsAttention => status == 'waiting';`) instead of duplicating fields.
+- Riverpod: `final xProvider = Provider((ref) => ...)` for sync, `AsyncNotifier` for
+  async. Mutate via `AsyncValue.guard()` so errors land in `state` rather than throwing.
+- UI lives in `lib/ui/`, widgets in `lib/ui/widgets/`. Prefer `CupertinoButton`
+  over `TextButton` for consistency with the Apple-flavoured design.
+- **Never hand-edit `lib/gen/assets.gen.dart`** — it is generated by build_runner.
+- Toasts/dialogs follow the `XSheet.show(context, ...)` static convention.
+
+## TypeScript style (`apps/desktop-windows/src/`)
+
+- `strict: true` is on. No `any`, no non-null `!` unless genuinely proven.
+- `tsc` is the only linter; there is no ESLint config. `npx tsc --noEmit` must be clean.
+- Modules are grouped `core/` (pure logic), `island/` (geometry, FSM, shape),
+  `zeus/` (mascot + state table), `views.ts`, `main.ts` (wiring only).
+- Pure logic modules must not touch the DOM. `IslandFsm` and `island/layout.ts`
+  are testable because of this — keep it that way.
+- Naming: `camelCase` values/functions, `PascalCase` classes, `SCREAMING_SNAKE`
+  constants. Module-private members use a leading underscore.
+- Errors: prefer `Result`-shaped early returns over exceptions in render paths.
+  Anything async gets a `.catch()` — an unhandled rejection in the webview is
+  invisible because release builds do not forward console output.
+- Animation constants are named and commented with *why*, not *what*.
+
+## Python style (`adapters/`)
+
+- **Runtime hooks must be fail-open.** If the gateway is unreachable, the AI
+  runtime's native permission flow continues. Never block the agent on Zeus.
+- `from __future__ import annotations`; `pathlib`, not `os.path`. Stdlib only — no deps.
+- Each hook is a standalone executable script (`#!/usr/bin/env python3`) that
+  `test.sh` compiles with `py_compile`.
+- Adapters use `ZEUS_AGENT_TOKEN`, never the admin credential.
+
+## Design system
+
+Non-negotiable, because the desktop island is a transparent always-on-top panel
+and the design only works as a set:
+
+- Island body is **flat `#000`**. Cards `#141518`, flat cards `#0e0f11`.
+  Hairlines are white at **3.5%**. There is no `backdrop-filter` glassmorphism —
+  the "glass" is the transparent window over the desktop.
+- Geometry is mode + view → `(w, h, radius, topRadius)` via `island/layout.ts`.
+  `topRadius` sign encodes the silhouette: positive = convex top corners,
+  negative = concave ear cutouts. Do not replace this with `border-radius`.
+- **Growth springs, shrink curves.** Growth overshoots, shrink does not. Asymmetric
+  animation is what makes the island read as a physical object.
+- Content cross-fade: exit 160 ms, enter 300 ms delayed 160 ms.
+- The rAF loop must shut down when nothing animates. State-driven loops that never
+  stop are the classic regression here.
+- Mascot frames live in `assets/zeus/` and are **generated**, not hand-edited.
+  Run `python3 tools/normalize_zeus_frames.py` after changing them; raw frames are
+  1122×1402 and illegible at island scale.
+- Event → state mapping is duplicated deliberately in Go, Dart and TS. When changing
+  it, change all three: `statusForEvent` in `gateway/internal/store.go`,
+  `stateForSession` in `apps/mobile/lib/ui/island/zeus_bot_state.dart`, and
+  `stateForSession` in `apps/desktop-windows/src/zeus/frames.ts`.
+
+## Before you commit
+
+1. `./scripts/test.sh`
+2. `cd apps/mobile && flutter analyze && flutter test`
+3. `cd apps/desktop-windows && npx tsc --noEmit`
+4. Never commit `.env`, `providers.json`, `target/`, `dist/` (except `dist/gateway/`), or `node_modules/` — all gitignored.
+5. Credentials belong in the OS keyring, never in source or logs.
