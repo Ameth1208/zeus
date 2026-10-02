@@ -1,0 +1,5 @@
+// Add this in AppDelegate.application(_:didFinishLaunchingWithOptions:)
+// after GeneratedPluginRegistrant.register(with: self):
+if let registrar = self.registrar(forPlugin: "ZeusLiquidGlass") {
+    registrar.register(ZeusGlassViewFactory(), withId: "zeus/liquid-glass")
+}

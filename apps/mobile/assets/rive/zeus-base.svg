@@ -1,0 +1,27 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <g id="zeus" fill="none" fill-rule="evenodd">
+    <g id="ears" fill="#15171C">
+      <path id="left-ear" d="M318 270C223 174 155 199 162 331c5 98 43 170 119 216l88-184z"/>
+      <path id="right-ear" d="M706 270c95-96 163-71 156 61-5 98-43 170-119 216l-88-184z"/>
+    </g>
+    <path id="head" fill="#20232A" d="M512 191c196 0 314 135 314 338 0 223-130 346-314 346S198 752 198 529c0-203 118-338 314-338z"/>
+    <path id="muzzle" fill="#101216" d="M512 493c107 0 174 61 174 158 0 96-75 164-174 164s-174-68-174-164c0-97 67-158 174-158z"/>
+    <g id="eyes">
+      <ellipse id="left-eye" fill="#F4F8FF" cx="399" cy="485" rx="49" ry="58"/>
+      <ellipse id="right-eye" fill="#F4F8FF" cx="625" cy="485" rx="49" ry="58"/>
+      <circle id="left-pupil" fill="#101216" cx="407" cy="500" r="25"/>
+      <circle id="right-pupil" fill="#101216" cx="617" cy="500" r="25"/>
+      <circle id="left-glint" fill="#78B8FF" cx="397" cy="488" r="9"/>
+      <circle id="right-glint" fill="#78B8FF" cx="607" cy="488" r="9"/>
+    </g>
+    <path id="nose" fill="#08090B" d="M512 568c42 0 67 18 67 48 0 28-27 54-67 54s-67-26-67-54c0-30 25-48 67-48z"/>
+    <path id="mouth" stroke="#050607" stroke-width="20" stroke-linecap="round" d="M449 694c37 37 89 37 126 0"/>
+    <path id="tongue" fill="#E8879F" d="M480 712h64v42c0 33-13 50-32 50s-32-17-32-50z"/>
+    <g id="collar">
+      <path fill="#0F1218" d="M310 792c116 76 288 76 404 0l-13 76c-112 78-266 78-378 0z"/>
+      <path id="collar-glow" fill="#4EA7FF" d="M365 828h294l-8 25H373z" opacity=".9"/>
+      <circle id="tag" fill="#151A22" stroke="#65B8FF" stroke-width="14" cx="512" cy="866" r="54"/>
+      <path fill="#65B8FF" d="M512 837l12 20 23 5-16 17 2 24-21-10-21 10 2-24-16-17 23-5z"/>
+    </g>
+  </g>
+</svg>

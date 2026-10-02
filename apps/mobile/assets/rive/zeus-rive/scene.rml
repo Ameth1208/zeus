@@ -1,0 +1,36 @@
+<Rive version="1" kind="fragment">
+  <Artboard defaultStateMachineId="0:7" width="500" height="500" name="Zeus" id="0:2">
+    <Fill name="Background">
+      <SolidColor colorValue="00000000" name="Color"/>
+    </Fill>
+
+    <!-- Minimal original Zeus mark. The layered dog reference lives in ../zeus-base.svg. -->
+    <Shape x="250" y="250" name="ZeusMark" id="0:14">
+      <Triangle originX="0.5" originY="0.5" width="210" height="190" name="Path"/>
+      <Fill name="Fill">
+        <SolidColor colorValue="FF17171B" name="Color"/>
+      </Fill>
+    </Shape>
+
+    <StateMachine name="ZeusStateMachine" id="0:7">
+      <StateMachineLayer name="Base" id="0:8">
+        <AnyState x="200" y="-120"/>
+        <ExitState x="400" y="-120"/>
+        <EntryState>
+          <StateTransition stateToId="0:12"/>
+        </EntryState>
+        <AnimationState x="200" animationId="0:6" id="0:12"/>
+      </StateMachineLayer>
+    </StateMachine>
+
+    <LinearAnimation loopValue="loop" duration="120" name="Breathe" id="0:6">
+      <KeyedObject objectId="0:14">
+        <KeyedProperty propertyKey="15">
+          <KeyFrameDouble value="-0.035" interpolationType="linear"/>
+          <KeyFrameDouble value="0.035" interpolationType="linear" frame="60"/>
+          <KeyFrameDouble value="-0.035" interpolationType="linear" frame="120"/>
+        </KeyedProperty>
+      </KeyedObject>
+    </LinearAnimation>
+  </Artboard>
+</Rive>
