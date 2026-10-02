@@ -1,0 +1,307 @@
+/* Zeus desktop island.
+   Flat #000 body, flat #141518 cards, hairline borders at 3.5% white. The
+   "glass" impression comes from the window itself being a transparent
+   always-on-top panel over the desktop — not from backdrop-filter. */
+
+:root {
+  color-scheme: dark;
+  --font: system-ui, "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --mono: "Cascadia Mono", "Consolas", ui-monospace, monospace;
+
+  --ink: #f5f6f8;
+  --dim: #9398a1;
+  --dim-2: #8e939c;
+  --dim-3: #6b7079;
+  --card: #141518;
+  --card-flat: #0e0f11;
+  --hairline: rgba(255, 255, 255, 0.035);
+
+  --red: #f4505e;
+  --green: #34d399;
+  --amber: #f5a524;
+  --cyan: #22d3ee;
+  --blue: #3b9eff;
+  --indigo: #6366f1;
+  --pink: #f472b6;
+
+  font-family: var(--font);
+  color: var(--ink);
+  background: transparent;
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #app {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  user-select: none;
+  cursor: default;
+}
+
+/* The panel is fixed and never moves; only the island inside it does. */
+.panel {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  /* Island sits flush against the top edge, centred. */
+  display: block;
+}
+
+/* Halo behind the island — a soft blue lift so it separates from any wallpaper. */
+.island-glow {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 0;
+  height: 0;
+  transform: translateX(-50%);
+  background: radial-gradient(120% 100% at 50% 0%, rgba(59, 158, 255, 0.16), transparent 70%);
+  filter: blur(6px);
+  opacity: 0;
+  transition: opacity 0.4s ease-in-out;
+  pointer-events: none;
+}
+.island-glow.on { opacity: 1; }
+
+/* ── The island body ────────────────────────────────────────────────────
+   Geometry is driven from JS (clip-path with a signed top radius) so the
+   shape can be convex, sharp or concave while it animates. Nothing about the
+   size or radius is transitioned in CSS — that would fight the springs. */
+.island {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #000;
+  overflow: hidden;
+  cursor: pointer;
+  /* The clip-path is set from islandPath() every frame. */
+  will-change: width, height, clip-path;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.48);
+  /* DEBUG outline: proves the island is painting and where its box is.
+     Remove once confirmed. */
+  outline: 1px solid rgba(255, 0, 128, 0.85);
+  outline-offset: -1px;
+}
+
+/* The mascot rides its own springs, so it is absolutely positioned and moved
+   with a transform rather than laid out. Its box overhangs the body, which is
+   why the halo is drawn on the canvas rather than the body. */
+.bot {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  will-change: transform;
+}
+
+/* ── Content cross-fade ──────────────────────────────────────────────────
+   Exit 160 ms, enter 300 ms delayed 160 ms so the container has already
+   started growing. The delay is what stops the content from snapping. */
+.content {
+  position: absolute;
+  inset: 0;
+  padding: 22px 20px 18px 108px;
+  opacity: 0;
+  transform: scale(0.97);
+  pointer-events: none;
+  transition: opacity 0.16s ease-in;
+  overflow: hidden;
+}
+.content.on {
+  opacity: 1;
+  transform: scale(1);
+  pointer-events: auto;
+  transition:
+    opacity 0.3s ease-out 0.16s,
+    transform 0.3s cubic-bezier(0.3, 1.2, 0.4, 1) 0.16s;
+}
+
+/* State wash from below, per view. */
+.content::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(280px 280px at 50% 130%, var(--wash, transparent) 0%, transparent 70%);
+}
+
+.head { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.head-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.title {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sub {
+  font-size: 13px;
+  color: var(--dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Ticker: live event line, masked top and bottom so it fades rather than cuts. */
+.ticker {
+  margin-top: 10px;
+  font-size: 13px;
+  line-height: 1.35;
+  color: var(--ink);
+  opacity: 0.9;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  mask-image: linear-gradient(to bottom, transparent 0%, #000 12%, #000 85%, transparent 100%);
+}
+
+.column { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+
+.pills {
+  position: absolute;
+  left: 108px;
+  right: 20px;
+  bottom: 18px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--card-flat);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: transform 0.18s ease-out, filter 0.18s ease-out;
+}
+.pill:hover { transform: scale(1.04); filter: brightness(1.06); }
+.dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
+
+/* ── Buttons ─────────────────────────────────────────────────────────────
+   Press feedback is a scale-down, not a colour change. */
+.btn {
+  padding: 8px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 11px;
+  background: rgba(255, 255, 255, 0.09);
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease-out, transform 0.08s ease-out;
+}
+.btn:hover { background: rgba(255, 255, 255, 0.15); }
+.btn:active { transform: scale(0.94); }
+.btn.primary {
+  background: var(--ink);
+  color: #0b0c0e;
+  border-color: transparent;
+}
+.btn.primary:hover { background: #fff; }
+
+.actions { display: flex; gap: 8px; }
+.actions .btn { flex: 1; }
+
+/* ── Pairing ─────────────────────────────────────────────────────────── */
+.pair { display: flex; flex-direction: column; gap: 9px; height: 100%; justify-content: center; }
+.pair input {
+  width: 100%;
+  padding: 9px 12px;
+  color: var(--ink);
+  background: var(--card-flat);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 11px;
+  outline: none;
+  font: inherit;
+  font-size: 12.5px;
+  user-select: text;
+}
+.pair input::placeholder { color: var(--dim-3); }
+.pair input:focus { border-color: rgba(255, 255, 255, 0.32); }
+.err { font-size: 11.5px; color: var(--red); }
+
+/* ── Persistent controls ─────────────────────────────────────────────────
+   The island has no decorations and no taskbar entry, so these are the only
+   way to fold it away or quit from the UI. They live outside the cross-faded
+   content so they never disappear with the view. */
+.controls {
+  position: absolute;
+  right: 12px;
+  bottom: 10px;
+  display: flex;
+  gap: 6px;
+  z-index: 2;
+}
+.icon-btn {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--dim);
+  cursor: pointer;
+  transition: background 0.15s ease-out, color 0.15s ease-out, transform 0.08s ease-out;
+}
+.icon-btn:hover { background: rgba(255, 255, 255, 0.15); color: var(--ink); }
+.icon-btn:active { transform: scale(0.9); }
+
+/* ── Auto-close countdown ───────────────────────────────────────────────
+   A hairline bar at the bottom, only visible in the final stretch. */
+.countdown {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  height: 2px;
+  width: 0;
+  transform: translateX(-50%);
+  background: rgba(255, 255, 255, 0.35);
+  transition: width 0.2s linear;
+  pointer-events: none;
+}
+
+/* A visible handle at the top edge. The island has to be recoverable after it
+   hides itself, and an invisible 6 px strip is not something anyone can find.
+   It is deliberately faint so it does not compete with the island itself. */
+.wake-strip {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 72px;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.10);
+  border-radius: 0 0 3px 3px;
+  cursor: pointer;
+  transition: background 0.2s ease-out;
+}
+.wake-strip:hover { background: rgba(255, 255, 255, 0.22); }
+
+/* Shown only while the island itself is folded away, so the handle does not
+   compete with a visible island. */
+.wake-strip.hidden-island { background: rgba(59, 158, 255, 0.45); }
+.wake-strip.hidden-island:hover { background: rgba(59, 158, 255, 0.8); }
+
+@media (prefers-reduced-motion: reduce) {
+  .content, .pill, .btn, .island-glow, .countdown { transition-duration: 0.01ms !important; }
+}
