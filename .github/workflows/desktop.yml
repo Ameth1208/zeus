@@ -1,0 +1,23 @@
+name: Zeus Tauri desktop
+on:
+  workflow_dispatch:
+  pull_request:
+    paths: ['apps/desktop-windows/**']
+jobs:
+  build:
+    strategy: { matrix: { os: [windows-latest, ubuntu-latest] } }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Linux prerequisites
+        if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+      - run: cd apps/desktop-windows && npm install
+      - run: cd apps/desktop-windows && npm run tauri build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zeus-desktop-${{ matrix.os }}
+          path: apps/desktop-windows/src-tauri/target/release/bundle/**

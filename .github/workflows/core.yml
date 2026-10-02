@@ -1,0 +1,33 @@
+name: Zeus core
+on: [push, pull_request]
+jobs:
+  gateway:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.23.x' }
+      - run: ./scripts/test.sh
+      - run: ./scripts/build-gateway.sh
+      - run: ./scripts/smoke-gateway.sh
+      - uses: actions/upload-artifact@v4
+        with: { name: zeus-gateway-binaries, path: dist/gateway }
+  mobile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with: { channel: stable }
+      - run: cd apps/mobile && ./scripts_bootstrap_platforms.sh
+      - run: cd apps/mobile && flutter pub get
+      - run: cd apps/mobile && dart run build_runner build --delete-conflicting-outputs
+      - run: cd apps/mobile && flutter analyze
+      - run: cd apps/mobile && flutter test
+      - run: cd apps/mobile && flutter build apk --release
+      - run: cd apps/mobile && flutter build appbundle --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zeus-android-release
+          path: |
+            apps/mobile/build/app/outputs/flutter-apk/app-release.apk
+            apps/mobile/build/app/outputs/bundle/release/app-release.aab

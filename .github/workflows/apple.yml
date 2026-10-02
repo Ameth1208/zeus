@@ -1,0 +1,31 @@
+name: Zeus Apple
+on:
+  workflow_dispatch:
+  pull_request:
+    paths: ['apps/desktop-macos/**', 'apps/mobile/**']
+jobs:
+  macos-desktop:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - run: brew install xcodegen
+      - run: cd apps/desktop-macos && xcodegen generate
+      - run: cd apps/desktop-macos && xcodebuild -project ZeusDesktop.xcodeproj -scheme ZeusDesktop -configuration Release -derivedDataPath build CODE_SIGNING_ALLOWED=NO build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zeus-macos-unsigned
+          path: apps/desktop-macos/build/Build/Products/Release/ZeusDesktop.app
+  ios-simulator:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with: { channel: stable }
+      - run: cd apps/mobile && ./scripts_bootstrap_platforms.sh
+      - run: cd apps/mobile && flutter pub get && dart run build_runner build --delete-conflicting-outputs
+      - run: cd apps/mobile && flutter test
+      - run: cd apps/mobile && flutter build ios --simulator --no-codesign
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zeus-ios-simulator
+          path: apps/mobile/build/ios/iphonesimulator/Runner.app
