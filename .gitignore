@@ -1,0 +1,29 @@
+.env
+**/.env
+**/providers.json
+**/.dart_tool/
+**/build/
+**/.flutter-plugins*
+**/Generated.xcconfig
+**/node_modules/
+**/dist/
+!dist/gateway/
+**/target/
+.DS_Store
+*.xcuserstate
+*.swp
+__pycache__/
+*.pyc
+
+# Local debug output
+tauri-dev.log
+.ruff_cache/
+
+# Self-referencing symlink left over from the "Personal Lib" -> "PersonalLib"
+# rename. It points back at this same directory through the old spaced path and
+# must never be committed.
+zeus-v0.1
+
+# Scratch contact sheets from comparing mascot frames at island scale. Useful
+# while tuning tools/normalize_zeus_frames.py, but they are throwaway.
+assets/zeus/zeuswork/
