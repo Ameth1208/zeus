@@ -1,103 +1,165 @@
-import { invoke } from "@tauri-apps/api/core";
-// The island controller. Owns the animation loop, pushes the island rect to
-// Rust so the transparent panel only eats clicks over the island itself, and
-// renders the active view.
+// The island controller — mirrors Coucou's Island architecture.
+// Controls sizing animation, mascot placement, hit testing with Rust backend, and view transitions.
 
+import { invoke } from "@tauri-apps/api/core";
 import { Spring, Tracked, closeCurve, clamp } from "../core/anim";
 import { IslandFsm } from "./fsm";
-import { islandPath } from "./shape";
 import {
+  PANEL_W,
   botPosition,
   islandSize,
   modeOrder,
   type IslandMode,
-  type IslandView,
-  VIEW_LAYOUTS,
+  type IslandViewName,
 } from "./layout";
 import { Mochi } from "../zeus/mochi";
-import { renderView } from "../views";
 import type { ZeusBotState } from "../zeus/frames";
+import { Sound } from "../core/sound";
 
 export interface IslandDeps {
   root: HTMLElement;
-  body: HTMLDivElement;
-  glow: HTMLDivElement;
-  bot: HTMLCanvasElement;
-  content: HTMLDivElement;
-  countdown: HTMLDivElement;
+  wakeStrip: HTMLElement;
+  island: HTMLElement;
+  clip: HTMLElement;
+  botCanvas: HTMLCanvasElement;
+  content: HTMLElement;
+  compactContent?: HTMLElement;
+  countdown: HTMLElement;
   onPushRect: (rect: { x: number; y: number; w: number; h: number }) => void;
-  onOpenSession?: (id: string) => void;
-  onAction?: (id: string, kind: string) => void;
+  onViewChange?: (view: IslandViewName) => void;
 }
 
 export class Island {
-  private fsm = new IslandFsm({ onTransition: () => this.kick() });
+  readonly fsm: IslandFsm;
   private engine: Mochi;
 
-  // Geometry gets its own tracked values so they interpolate independently.
-  private width = new Tracked(islandSize("compact", "empty").w);
-  private height = new Tracked(islandSize("compact", "empty").h);
-  private radius = new Tracked(islandSize("compact", "empty").radius);
-  private topRadius = new Tracked(islandSize("compact", "empty").topRadius);
+  // Tracked properties for physics animation
+  private width = new Tracked(islandSize("compact", "overview").w);
+  private height = new Tracked(islandSize("compact", "overview").h);
+  private radius = new Tracked(islandSize("compact", "overview").radius);
 
-  // The mascot rides its own springs so it can travel independently.
-  private botCx = new Spring(34, 0.42, 0.8);
-  private botCy = new Spring(31, 0.42, 0.8);
-  private botSize = new Spring(46, 0.42, 0.8);
+  // Mascot springs (faster than island so it leads the motion)
+  private botCx = new Spring(40, 0.42, 0.8);
+  private botCy = new Spring(16, 0.42, 0.8);
+  private botSize = new Spring(20, 0.42, 0.8);
 
   private running = false;
   private lastMs = 0;
-  private viewKey = "";
-  private countdownPct = 1;
+  private pushedRect = { x: -1, y: -1, w: -1, h: -1 };
+  private pointer = { x: 0, y: 0 };
 
   constructor(private deps: IslandDeps) {
-    this.engine = new Mochi(deps.bot);
-    this.engine.emit = () => this.paint();
+    this.engine = new Mochi(deps.botCanvas);
+    this.engine.emit = () => this.applyGeometry();
+
+    this.fsm = new IslandFsm((from, to) => {
+      if (to === "expanded") Sound.play("open");
+      if (from === "expanded" && to !== "expanded") Sound.play("close");
+      this.animateGeometry(modeOrder(to) < modeOrder(from));
+    });
+
     this.applyTargets(true);
-    this.bindPointer();
+    this.applyGeometry();
+    this.wireInput();
     this.kick();
   }
-
-  // ── Public control surface ────────────────────────────────────────────
 
   get mode(): IslandMode {
     return this.fsm.mode;
   }
 
-  get view(): IslandView {
+  get view(): IslandViewName {
     return this.fsm.view;
   }
 
   reveal(): void {
-    if (this.fsm.mode === "hidden") this.fsm.compact();
+    this.fsm.reveal();
+    this.kick();
   }
 
   toggle(): void {
     this.fsm.toggle();
+    this.kick();
+  }
+
+  expand(view?: IslandViewName): void {
+    this.fsm.forceExpanded(view);
+    this.kick();
   }
 
   collapse(): void {
-    this.fsm.collapse();
-  }
-
-  hide(): void {
-    this.fsm.hiddenExternally();
-  }
-
-  onSessionsChanged(state: string, count: number, finished: boolean): void {
-    this.engine.setState(state as ZeusBotState);
-    if (finished) this.fsm.onFinished(count);
-    else this.fsm.onSessionActive(state, count);
+    this.fsm.forceCompact();
     this.kick();
   }
 
-  onSessionsCleared(): void {
-    this.engine.setState("idle");
-    this.fsm.onSessionsCleared();
+  setView(view: IslandViewName): void {
+    this.fsm.view = view;
+    if (this.fsm.mode !== "expanded") {
+      this.fsm.forceExpanded(view);
+    } else {
+      this.animateGeometry(false);
+    }
+    this.deps.onViewChange?.(view);
     this.kick();
   }
 
-  // ── Animation ─────────────────────────────────────────────────────────
+  isBotHit(clientX: number, clientY: number): boolean {
+    const rect = this.deps.island.getBoundingClientRect();
+    const botScreenX = rect.left + this.botCx.value;
+    const botScreenY = rect.top + this.botCy.value;
+    const r = this.botSize.value * 0.55;
+    return (clientX - botScreenX) ** 2 + (clientY - botScreenY) ** 2 <= r * r;
+  }
+
+  poke(): void {
+    this.engine.poke();
+    this.kick();
+  }
+
+  setBotState(state: ZeusBotState): void {
+    this.engine.setState(state);
+    if (state === "approval") {
+      this.fsm.pinned = true;
+      this.expand("approval");
+    } else if (state === "finished") {
+      this.fsm.pinned = false;
+    }
+    this.kick();
+  }
+
+  private wireInput(): void {
+    this.deps.wakeStrip.addEventListener("mouseenter", () => {
+      Sound.resume();
+      if (this.fsm.mode === "hidden") {
+        this.fsm.mouseEntered();
+        this.kick();
+      }
+    });
+
+    this.deps.island.addEventListener("mouseenter", () => {
+      this.fsm.mouseEntered();
+    });
+
+    this.deps.island.addEventListener("mouseleave", () => {
+      this.fsm.mouseLeft();
+    });
+
+    window.addEventListener("pointermove", (e) => {
+      this.pointer.x = e.clientX;
+      this.pointer.y = e.clientY;
+      this.engine.setMouse(e.clientX, e.clientY);
+    });
+
+    window.addEventListener("pointerleave", () => {
+      this.engine.clearMouse();
+    });
+
+    window.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && this.fsm.mode === "expanded" && !this.fsm.pinned) {
+        this.collapse();
+      }
+    });
+  }
 
   private kick(): void {
     if (this.running) return;
@@ -110,195 +172,138 @@ export class Island {
     const dt = clamp((now - this.lastMs) / 1000, 0, 0.05);
     this.lastMs = now;
 
-    this.applyTargets(false);
     this.width.step(dt);
     this.height.step(dt);
     this.radius.step(dt);
-    this.topRadius.step(dt);
+
     this.botCx.step(dt);
     this.botCy.step(dt);
     this.botSize.step(dt);
 
-    this.engine.setMouse(this.pointer.x, this.pointer.y);
-    this.paint();
-    this.updateCountdown();
+    this.applyGeometry();
 
     const busy =
       this.width.animating ||
       this.height.animating ||
       this.radius.animating ||
-      this.topRadius.animating ||
       !this.botCx.settled ||
       !this.botCy.settled ||
       !this.botSize.settled ||
       this.engineIsLooping();
 
-    if (busy) requestAnimationFrame(this.frame);
-    else this.running = false;
+    if (busy) {
+      requestAnimationFrame(this.frame);
+    } else {
+      this.running = false;
+    }
   };
 
   private engineIsLooping(): boolean {
-    // Any state with a looping mascot animation keeps the loop alive even when
-    // the geometry has settled, otherwise breathing stops mid-breath.
     const s = this.engine.state;
     return (
       s === "sleeping" ||
       s === "approval" ||
       s === "searching" ||
-      s === "interrupted" ||
+      s === "working" ||
+      s === "dizzy" ||
+      s === "love" ||
       this.fsm.mode === "expanded"
     );
   }
 
-  /** Chooses spring or curve per property based on direction of travel, then
-   *  retargets the mascot springs. */
   private applyTargets(instant: boolean): void {
     const size = islandSize(this.fsm.mode, this.fsm.view);
-    const growing = modeOrder(this.fsm.mode) >= 2;
+    const pos = botPosition(this.fsm.mode, this.fsm.view, size.h);
 
-    const drive = (t: Tracked, v: number): void => {
-      if (instant) {
-        t.value = v;
-        t.target = v;
-        return;
-      }
-      if (v > t.target) t.springTo(v, 0.5, 0.72);
-      else t.curveTowards(v, 340, closeCurve);
-    };
-
-    drive(this.width, size.w);
-    drive(this.height, size.h);
-    drive(this.radius, size.radius);
-    drive(this.topRadius, size.topRadius);
-
-    const p = botPosition(this.fsm.mode, this.fsm.view, size.h);
     if (instant) {
-      this.botCx.value = this.botCx.target = p.cx;
-      this.botCy.value = this.botCy.target = p.cy;
-      this.botSize.value = this.botSize.target = p.diameter;
+      this.width.value = this.width.target = size.w;
+      this.height.value = this.height.target = size.h;
+      this.radius.value = this.radius.target = size.radius;
+
+      this.botCx.value = this.botCx.target = pos.cx;
+      this.botCy.value = this.botCy.target = pos.cy;
+      this.botSize.value = this.botSize.target = pos.diameter;
+      return;
+    }
+
+    if (size.w > this.width.target) this.width.springTo(size.w, 0.5, 0.72);
+    else this.width.curveTowards(size.w, 340, closeCurve);
+
+    if (size.h > this.height.target) this.height.springTo(size.h, 0.5, 0.72);
+    else this.height.curveTowards(size.h, 340, closeCurve);
+
+    this.radius.springTo(size.radius, 0.5, 0.72);
+
+    this.botCx.target = pos.cx;
+    this.botCy.target = pos.cy;
+    this.botSize.target = pos.diameter;
+  }
+
+  private animateGeometry(shrinking: boolean): void {
+    const size = islandSize(this.fsm.mode, this.fsm.view);
+    const pos = botPosition(this.fsm.mode, this.fsm.view, size.h);
+
+    if (shrinking) {
+      this.width.curveTowards(size.w, 340, closeCurve);
+      this.height.curveTowards(size.h, 340, closeCurve);
+      this.radius.curveTowards(size.radius, 340, closeCurve);
     } else {
-      // The mascot springs are deliberately faster than the island so it reads
-      // as leading the movement rather than being dragged by it.
-      this.botCx.tune(0.42, 0.8);
-      this.botCy.tune(0.42, 0.8);
-      this.botSize.tune(0.42, 0.8);
-      this.botCx.target = p.cx;
-      this.botCy.target = p.cy;
-      this.botSize.target = p.diameter;
+      this.width.springTo(size.w, 0.5, 0.72);
+      this.height.springTo(size.h, 0.5, 0.72);
+      this.radius.springTo(size.radius, 0.5, 0.72);
     }
-    void growing;
+
+    this.botCx.target = pos.cx;
+    this.botCy.target = pos.cy;
+    this.botSize.target = pos.diameter;
+
+    this.kick();
   }
 
-  private pointer = { x: 0, y: 0 };
-
-  private bindPointer(): void {
-    window.addEventListener("pointermove", (e) => {
-      this.pointer.x = e.clientX;
-      this.pointer.y = e.clientY;
-      this.engine.setMouse(e.clientX, e.clientY);
-    });
-    window.addEventListener("pointerleave", () => this.engine.clearMouse());
-  }
-
-  // ── Painting ──────────────────────────────────────────────────────────
-
-  private paintCount = 0;
-
-  private paint(): void {
-    const w = Math.round(this.width.value);
-    const h = Math.round(this.height.value);
+  private applyGeometry(): void {
+    const w = this.width.value;
+    const hh = this.height.value;
     const r = this.radius.value;
-    const tr = this.topRadius.value;
-    const { body, glow, bot } = this.deps;
 
-    if (this.paintCount < 3) {
-      this.paintCount++;
-      const probe = islandPath(w, h, r, tr);
-      console.log(`[paint#${this.paintCount}] w=${w} h=${h} r=${r} tr=${tr} pathLen=${probe.length}`);
-      void invoke("log_diag", {
-        msg: `paint#${this.paintCount} w=${w} h=${h} r=${r.toFixed(1)} tr=${tr.toFixed(1)} pathLen=${probe.length}`,
-      }).catch(() => {});
+    const islandEl = this.deps.island;
+    islandEl.style.width = `${w}px`;
+    islandEl.style.height = `${hh}px`;
+    islandEl.style.borderRadius = `0 0 ${r}px ${r}px`;
+    islandEl.style.transform = `translateX(-50%)`;
+
+    // Content is only visible and interactive when expanded
+    const isExpanded = this.fsm.mode === "expanded";
+    this.deps.content.style.opacity = isExpanded ? "1" : "0";
+    this.deps.content.style.pointerEvents = isExpanded ? "auto" : "none";
+
+    if (this.deps.compactContent) {
+      this.deps.compactContent.style.opacity = isExpanded ? "0" : "1";
+      this.deps.compactContent.style.pointerEvents = isExpanded ? "none" : "auto";
     }
 
-    if (h <= 0) {
-      body.style.opacity = "0";
-      glow.style.opacity = "0";
-      this.pushRect(0, 0);
-      return;
-    }
+    // Position and draw mascot
+    const botCanvas = this.deps.botCanvas;
+    this.engine.botCx = this.botCx.value;
+    this.engine.botCy = this.botCy.value;
+    this.engine.draw(this.botSize.value);
 
-    body.style.opacity = "1";
-    body.style.width = `${w}px`;
-    body.style.height = `${h}px`;
-    const d = islandPath(w, h, r, tr);
-    body.style.clipPath = `path('${d}')`;
+    botCanvas.style.transform = `translate(${this.botCx.value}px, ${this.botCy.value}px) translate(-50%, -50%)`;
 
-    glow.style.width = `${w}px`;
-    glow.style.height = `${h}px`;
-    glow.style.transform = `translateX(-50%) translateY(${h}px)`;
-
-    this.engine.draw(this.botCx.value, this.botCy.value, this.botSize.value);
-    bot.style.transform = `translate(${this.botCx.value}px, ${this.botCy.value}px) translate(-50%, -50%)`;
-
-    this.renderContent(w, h);
-    this.pushRect(w, h);
-  }
-
-  private renderContent(w: number, h: number): void {
-    if (this.fsm.mode !== "expanded") {
-      if (this.viewKey !== "") {
-        this.viewKey = "";
-        this.deps.content.innerHTML = "";
-        this.deps.content.className = "content";
-      }
-      return;
-    }
-    const layout = VIEW_LAYOUTS[this.fsm.view];
-    const key = `${this.fsm.view}:${layout.agentMode}:${w}`;
-    if (key === this.viewKey) return;
-    this.viewKey = key;
-    this.deps.content.className = `content on view-${this.fsm.view}`;
-    this.deps.content.innerHTML = renderView(this.fsm.view, this.deps);
-    this.deps.content.style.setProperty("--wash", layout.wash ?? "transparent");
-  }
-
-  private updateCountdown(): void {
-    const el = this.deps.countdown;
-    if (this.fsm.pinned || this.fsm.mode !== "expanded") {
-      el.style.width = "0px";
-      return;
-    }
-    // Only the final stretch of the auto-close window shows the bar.
-    el.style.width = `${this.countdownPct * 100}%`;
-  }
-
-  /** Pushes the island rect to Rust so the transparent panel only eats clicks
-   *  over the island itself, with a margin. */
-  private lastPushed = { x: 0, y: 0, w: 0, h: 0 };
-  private folded = false;
-
-  /** Lets the parent show a reveal handle only while the island is away. */
-  onFoldChange?: (folded: boolean) => void;
-
-  private pushRect(w: number, h: number): void {
-    const folded = h <= 0;
-    if (folded !== this.folded) {
-      this.folded = folded;
-      this.onFoldChange?.(folded);
-    }
+    // Push bounding rect to Tauri Rust backend for hit testing
     const rect = {
-      x: Math.round((720 - w) / 2),
+      x: Math.round((PANEL_W - w) / 2),
       y: 0,
       w: Math.round(w),
-      h: Math.round(h) + (h > 0 ? 14 : 0),
+      h: Math.round(hh),
     };
-    const p = this.lastPushed;
+
+    const p = this.pushedRect;
     if (
       Math.abs(p.x - rect.x) > 0.5 ||
       Math.abs(p.w - rect.w) > 0.5 ||
       Math.abs(p.h - rect.h) > 0.5
     ) {
-      this.lastPushed = rect;
+      this.pushedRect = rect;
       this.deps.onPushRect(rect);
     }
   }

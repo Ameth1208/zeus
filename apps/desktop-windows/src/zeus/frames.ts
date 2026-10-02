@@ -11,7 +11,9 @@ export type ZeusBotState =
   | "error"
   | "finished"
   | "sleeping"
-  | "interrupted";
+  | "interrupted"
+  | "dizzy"
+  | "love";
 
 export type BadgeKind = "none" | "dots" | "bang" | "question" | "dot";
 
@@ -40,16 +42,18 @@ export interface ZeusStateCfg {
 }
 
 export const COLORS = {
-  idle: "#E6E9EE",
-  working: "#3B9EFF",
-  thinking: "#8B5CF6",
-  searching: "#6366F1",
+  idle: "#3B82F6",
+  working: "#3B82F6",
+  thinking: "#60A5FA",
+  searching: "#2563EB",
   approval: "#F5A524",
-  question: "#22D3EE",
+  question: "#38BDF8",
   error: "#F4505E",
-  finished: "#34D399",
-  sleeping: "#94A3B8",
-  interrupted: "#F472B6",
+  finished: "#38BDF8",
+  sleeping: "#3B82F6",
+  interrupted: "#60A5FA",
+  dizzy: "#60A5FA",
+  love: "#38BDF8",
 } as const;
 
 const base: Omit<ZeusStateCfg, "frame"> = {
@@ -153,6 +157,25 @@ export const BOT_STATES: Record<ZeusBotState, ZeusStateCfg> = {
     tint: 0.7,
     badge: "dot",
     amplitude: 0.95,
+  },
+  dizzy: {
+    ...base,
+    frame: "error.png",
+    color: COLORS.dizzy,
+    glow: 0.75,
+    tint: 0.7,
+    badge: "dot",
+    amplitude: 0.95,
+  },
+  love: {
+    ...base,
+    frame: "blink.png",
+    color: COLORS.love,
+    glow: 0.85,
+    tint: 0.4,
+    badge: "none",
+    amplitude: 1.06,
+    bounces: true,
   },
 };
 
@@ -260,12 +283,12 @@ export function describeEvent(session: Session): string {
 
 /** Stable per-project colour so a session keeps its identity across events. */
 const PROJECT_COLORS: Record<string, string> = {
-  "zeus-v0.1": "#3B9EFF",
-  gateway: "#34D399",
-  mobile: "#8B5CF6",
-  "desktop-windows": "#F5A524",
+  "zeus-v0.1": "#3B82F6",
+  gateway: "#2563EB",
+  mobile: "#60A5FA",
+  "desktop-windows": "#38BDF8",
 };
-const FALLBACK_COLORS = ["#22C55E", "#EAB308", "#60A5FA", "#E879F9"];
+const FALLBACK_COLORS = ["#3B82F6", "#60A5FA", "#2563EB", "#38BDF8"];
 
 export function colorForProject(project?: string): string {
   if (!project) return "#6B7079";
