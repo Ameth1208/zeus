@@ -1,0 +1,26 @@
+name: ZeusDesktop
+options:
+  bundleIdPrefix: ai.zeus.agent
+  deploymentTarget:
+    macOS: "15.0"
+settings:
+  base:
+    SWIFT_VERSION: 6.0
+    MACOSX_DEPLOYMENT_TARGET: 15.0
+targets:
+  ZeusDesktop:
+    type: application
+    platform: macOS
+    sources:
+      - Sources
+    resources:
+      - Resources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ai.zeus.agent.desktop
+        PRODUCT_NAME: Zeus
+        INFOPLIST_KEY_CFBundleDisplayName: Zeus
+        INFOPLIST_KEY_LSUIElement: true
+        ENABLE_HARDENED_RUNTIME: true
+    entitlements:
+      path: ZeusDesktop.entitlements
