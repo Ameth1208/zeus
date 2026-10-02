@@ -1,0 +1,37 @@
+{
+  "zeus-monitor": {
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "ZEUS_ANTIGRAVITY_HOOK=PostToolUse python3 ~/.zeus/adapters/antigravity/zeus_antigravity_hook.py",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PreInvocation": [
+      {
+        "type": "command",
+        "command": "ZEUS_ANTIGRAVITY_HOOK=PreInvocation python3 ~/.zeus/adapters/antigravity/zeus_antigravity_hook.py",
+        "timeout": 5
+      }
+    ],
+    "PostInvocation": [
+      {
+        "type": "command",
+        "command": "ZEUS_ANTIGRAVITY_HOOK=PostInvocation python3 ~/.zeus/adapters/antigravity/zeus_antigravity_hook.py",
+        "timeout": 5
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": "ZEUS_ANTIGRAVITY_HOOK=Stop python3 ~/.zeus/adapters/antigravity/zeus_antigravity_hook.py",
+        "timeout": 5
+      }
+    ]
+  }
+}

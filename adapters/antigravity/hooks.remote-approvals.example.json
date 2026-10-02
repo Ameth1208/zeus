@@ -1,0 +1,16 @@
+{
+  "zeus-remote-approval": {
+    "PreToolUse": [
+      {
+        "matcher": "run_command|write_to_file|replace_file_content|multi_replace_file_content",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "ZEUS_REMOTE_APPROVALS=1 ZEUS_ANTIGRAVITY_HOOK=PreToolUse python3 ~/.zeus/adapters/antigravity/zeus_antigravity_hook.py",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

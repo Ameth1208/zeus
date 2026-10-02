@@ -1,0 +1,12 @@
+{
+  "hooks": {
+    "SessionStart": [{"hooks": [{"type": "command", "command": "python3 ~/.zeus/adapters/codex/zeus_codex_hook.py"}]}],
+    "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "python3 ~/.zeus/adapters/codex/zeus_codex_hook.py"}]}],
+    "PreToolUse": [{"matcher": "*", "hooks": [{"type": "command", "command": "python3 ~/.zeus/adapters/codex/zeus_codex_hook.py"}]}],
+    "PostToolUse": [{"matcher": "*", "hooks": [{"type": "command", "command": "python3 ~/.zeus/adapters/codex/zeus_codex_hook.py"}]}],
+    "PermissionRequest": [{"matcher": "*", "hooks": [{"type": "command", "command": "python3 ~/.zeus/adapters/codex/zeus_codex_hook.py", "statusMessage": "Waiting for Zeus approval"}]}],
+    "Stop": [{"hooks": [{"type": "command", "command": "python3 ~/.zeus/adapters/codex/zeus_codex_hook.py"}]}],
+    "Interrupt": [{"hooks": [{"type": "command", "command": "python3 ~/.zeus/adapters/codex/zeus_codex_hook.py"}]}],
+    "SessionEnd": [{"hooks": [{"type": "command", "command": "python3 ~/.zeus/adapters/codex/zeus_codex_hook.py"}]}]
+  }
+}
