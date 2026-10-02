@@ -1,0 +1,20 @@
+services:
+  zeus-gateway:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      ZEUS_PROVIDERS_FILE: /app/providers.json
+      ZEUS_STATE_FILE: /data/auth.json
+      ZEUS_SESSION_STATE_FILE: /data/sessions.json
+    volumes:
+      - ./providers.json:/app/providers.json:ro
+      - zeus-data:/data
+    ports:
+      # Put Caddy/Nginx/Traefik in front; do not expose the raw port publicly.
+      - "127.0.0.1:8080:8080"
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  zeus-data:

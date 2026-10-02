@@ -1,0 +1,58 @@
+{
+  "providers": [
+    {
+      "id": "openai",
+      "name": "OpenAI",
+      "kind": "openai-compatible",
+      "base_url": "https://api.openai.com/v1",
+      "api_key_env": "OPENAI_API_KEY",
+      "default_model": "",
+      "enabled": true
+    },
+    {
+      "id": "deepseek",
+      "name": "DeepSeek",
+      "kind": "openai-compatible",
+      "base_url": "https://api.deepseek.com",
+      "api_key_env": "DEEPSEEK_API_KEY",
+      "default_model": "",
+      "enabled": true
+    },
+    {
+      "id": "gemini",
+      "name": "Google Gemini",
+      "kind": "openai-compatible",
+      "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+      "api_key_env": "GEMINI_API_KEY",
+      "default_model": "",
+      "enabled": true
+    },
+    {
+      "id": "openrouter",
+      "name": "OpenRouter",
+      "kind": "openai-compatible",
+      "base_url": "https://openrouter.ai/api/v1",
+      "api_key_env": "OPENROUTER_API_KEY",
+      "default_model": "",
+      "enabled": true
+    },
+    {
+      "id": "ollama",
+      "name": "Ollama",
+      "kind": "openai-compatible",
+      "base_url": "http://host.docker.internal:11434/v1",
+      "api_key_env": "",
+      "default_model": "",
+      "enabled": true
+    },
+    {
+      "id": "anthropic",
+      "name": "Anthropic",
+      "kind": "anthropic-compatible",
+      "base_url": "https://api.anthropic.com",
+      "api_key_env": "ANTHROPIC_API_KEY",
+      "default_model": "",
+      "enabled": true
+    }
+  ]
+}
