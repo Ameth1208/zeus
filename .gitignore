@@ -19,6 +19,10 @@ __pycache__/
 tauri-dev.log
 .ruff_cache/
 
+# Mutable gateway state written at runtime: paired-device tokens and live
+# sessions. Never source-controlled, it is regenerated on boot.
+gateway/data/
+
 # Self-referencing symlink left over from the "Personal Lib" -> "PersonalLib"
 # rename. It points back at this same directory through the old spaced path and
 # must never be committed.
