@@ -25,6 +25,9 @@ type DeviceRecord struct {
 	Name      string    `json:"name"`
 	CreatedAt time.Time `json:"created_at"`
 	LastSeen  time.Time `json:"last_seen,omitempty"`
+	// PushToken is the FCM registration token for this device. Empty until the
+	// mobile app registers one; the dispatcher is a no-op while it stays empty.
+	PushToken string `json:"push_token,omitempty"`
 }
 
 type authState struct {
@@ -139,6 +142,40 @@ func (a *AuthStore) RevokeDevice(id string) bool {
 		_ = a.persistLocked()
 	}
 	return found
+}
+
+// SetPushToken records the FCM registration token for the device that owns
+// this credential. The device authenticates with its own token, so it can only
+// ever set its own push token.
+func (a *AuthStore) SetPushToken(token, pushToken string) bool {
+	if token == "" || a.IsAdmin(token) {
+		return false
+	}
+	key := tokenHash(token)
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	d, ok := a.tokens[key]
+	if !ok {
+		return false
+	}
+	d.PushToken = pushToken
+	a.tokens[key] = d
+	_ = a.persistLocked()
+	return true
+}
+
+// PushTokens returns the registered push tokens of every device, for the push
+// dispatcher.
+func (a *AuthStore) PushTokens() []string {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	var out []string
+	for _, d := range a.tokens {
+		if d.PushToken != "" {
+			out = append(out, d.PushToken)
+		}
+	}
+	return out
 }
 
 func (a *AuthStore) prunePairingsLocked() {

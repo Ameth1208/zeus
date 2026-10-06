@@ -144,7 +144,19 @@ export const clearCredentials = () => invoke<void>("clear_credentials");
 export const configureGateway = (credentials: Credentials | null) =>
   invoke<void>("engine_gateway_configure", { credentials });
 export const gatewayStatus = () => invoke<GatewayStatus>("engine_gateway_status");
-export const setHotkey = (shortcut: string) => invoke<void>("set_hotkey", { shortcut });
+export const getNotificationsEnabled = () => invoke<boolean>("get_notifications_enabled");
+export const setNotificationsEnabled = (enabled: boolean) =>
+  invoke<void>("set_notifications_enabled", { enabled });
+export interface NowPlaying {
+  available: boolean;
+  title: string;
+  artist: string;
+  playing: boolean;
+}
+
+export const mediaNowPlaying = () => invoke<NowPlaying>("media_now_playing");
+export const mediaControl = (command: "play_pause" | "next" | "previous") =>
+  invoke<void>("media_control", { command });
 export const setIslandRect = (rect: { x: number; y: number; w: number; h: number }) =>
   invoke<void>("set_island_rect", { rect });
 export const hideIsland = () => invoke<void>("hide_island");

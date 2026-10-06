@@ -23,6 +23,9 @@ window.addEventListener("error", (e) => diag(`ERROR ${e.message} @${e.filename}:
 window.addEventListener("unhandledrejection", (e) => diag(`REJECT ${String(e.reason)}`));
 
 ViewData.soundOn = Sound.isEnabled;
+void zeus.getNotificationsEnabled()
+  .then((enabled) => { ViewData.notificationsOn = enabled; })
+  .catch((err) => diag(`notifications pref load failed: ${String(err)}`));
 
 // Build the island DOM shell. Unchanged from the original layout: the visual
 // design is not affected by where the data comes from.
@@ -109,7 +112,18 @@ void zeus.loadCredentials().then((credentials) => {
 async function refreshGatewayStatus(): Promise<void> {
   const status = await zeus.gatewayStatus();
   ViewData.gatewayState = status.state;
+  syncMascotAndTicker();
   render();
+}
+
+/** Now-playing only matters while the media view is on screen. */
+async function refreshMedia(): Promise<void> {
+  try {
+    ViewData.media = await zeus.mediaNowPlaying();
+    render();
+  } catch (err) {
+    diag(`media poll failed: ${String(err)}`);
+  }
 }
 
 // Clicking the island while compact expands it. Controls handle their own
@@ -141,9 +155,14 @@ document.addEventListener("focusin", (e) => {
 /** Pulls the local snapshot. Cheap enough to call on every event. */
 async function refresh(): Promise<void> {
   try {
-    const [sessions, pending] = await Promise.all([zeus.sessions(), zeus.pending()]);
+    const [sessions, pending, gateway] = await Promise.all([
+      zeus.sessions(),
+      zeus.pending(),
+      zeus.gatewayStatus(),
+    ]);
     ViewData.sessions = sessions as Session[];
     ViewData.pending = pending;
+    ViewData.gatewayState = gateway.state;
     ViewData.runtimes = await zeus.runtimes();
     ViewData.hostState = "online";
     if (ViewData.focus) {
@@ -153,6 +172,7 @@ async function refresh(): Promise<void> {
       ViewData.focus = ViewData.sessions[0];
     }
     syncMascotAndTicker();
+    if (island.view === "media") void refreshMedia();
     render();
   } catch (err) {
     // The engine being unreachable means the host is gone; the island should say
@@ -170,13 +190,22 @@ async function refresh(): Promise<void> {
  */
 let lastPinnedRequest = "";
 
-/**
- * One mascot for the whole island, so the state is the most urgent thing across
- * every session rather than only the focused one.
- */
+/** The `session.id:last_seq` of the terminal event the island already pinned
+ *  for. Without this guard the 4s refresh would re-pin a finished view after
+ *  the user dismissed it. */
+let lastTerminalKey = "";
+
+function terminalSession(status: string): Session | undefined {
+  return ViewData.sessions.find((s) => s.status === status);
+}
+
 function syncMascotAndTicker(): void {
   const state = uiStateForSessions(ViewData.sessions as Session[]);
-  island.setBotState(frameFor(state));
+  // With nothing demanding attention, a dead gateway link is the most useful
+  // thing the mascot can say: sessions keep running, but the phone is blind.
+  const displayState =
+    state === "idle" && ViewData.gatewayState === "offline" ? "disconnected" : state;
+  island.setBotState(frameFor(displayState));
 
   if (state === "waitingApproval") {
     const request = ViewData.pending[0];
@@ -193,6 +222,17 @@ function syncMascotAndTicker(): void {
     ViewData.focus = ViewData.sessions.find((session) => session.last_event === "input.requested") ?? ViewData.focus;
     island.fsm.pinned = true;
     island.setView("question");
+  } else if (state === "success" || state === "error") {
+    // A finished or failed session is the reason the island exists: pin it once
+    // per terminal event so the outcome is seen even away from the screen.
+    const session = terminalSession(state === "success" ? "completed" : "failed");
+    const key = session ? `${session.id}:${session.last_seq}` : "";
+    if (session && key !== lastTerminalKey) {
+      lastTerminalKey = key;
+      ViewData.focus = session;
+      island.fsm.pinned = true;
+      island.setView(state === "success" ? "finished" : "error");
+    }
   } else if (island.fsm.view === "approval" || island.fsm.view === "question") {
     island.fsm.pinned = false;
     island.setView("overview");
@@ -221,25 +261,12 @@ function syncMascotAndTicker(): void {
 document.addEventListener("click", async (e) => {
   const t = e.target as HTMLElement;
 
-  const cmdBtn = t.closest<HTMLElement>("[data-cmd]");
-  if (cmdBtn) {
-    e.stopPropagation();
-    const input = document.querySelector<HTMLInputElement>("#prompt-input");
-    if (input) {
-      const cmd = cmdBtn.dataset.cmd!;
-      if (cmd === "status") input.value = "git status";
-      else if (cmd === "test") input.value = "run the tests and report failures";
-      else if (cmd === "review") input.value = "review the recent diff for security risks";
-      input.focus();
-    }
-    return;
-  }
-
   const navBtn = t.closest<HTMLElement>("[data-nav]");
   if (navBtn) {
     e.stopPropagation();
     Sound.play("blip");
-    island.setView(navBtn.dataset.nav as "overview" | "launcher" | "prompt" | "settings");
+    island.setView(navBtn.dataset.nav as "overview" | "launcher" | "prompt" | "media" | "settings");
+    if (navBtn.dataset.nav === "media") void refreshMedia();
     void zeus.focusWindow();
     render();
     return;
@@ -272,6 +299,14 @@ document.addEventListener("click", async (e) => {
     case "toggle-poking": {
       ViewData.disablePoking = !ViewData.disablePoking;
       localStorage.setItem("zeus_disable_poking", String(ViewData.disablePoking));
+      Sound.play("blip");
+      render();
+      return;
+    }
+    case "toggle-notifications": {
+      const next = !ViewData.notificationsOn;
+      ViewData.notificationsOn = next;
+      await zeus.setNotificationsEnabled(next).catch((err) => diag(`notifications pref failed: ${String(err)}`));
       Sound.play("blip");
       render();
       return;
@@ -387,6 +422,33 @@ document.addEventListener("click", async (e) => {
         ViewData.busyAction = "";
         render();
       }
+      return;
+    }
+    case "dismiss-terminal": {
+      // Record the dismissal so the refresh loop does not re-pin the same
+      // terminal event.
+      const session = terminalSession("completed") ?? terminalSession("failed");
+      if (session) lastTerminalKey = `${session.id}:${session.last_seq}`;
+      island.fsm.pinned = false;
+      island.setView("overview");
+      render();
+      return;
+    }
+    case "next-task": {
+      island.fsm.pinned = true;
+      island.setView("prompt");
+      render();
+      window.setTimeout(() => document.querySelector<HTMLInputElement>("#session-message")?.focus(), 0);
+      return;
+    }
+    case "media-playpause":
+    case "media-next":
+    case "media-previous": {
+      const command =
+        act === "media-playpause" ? "play_pause" : act === "media-next" ? "next" : "previous";
+      await zeus.mediaControl(command).catch((err) => diag(`media control failed: ${String(err)}`));
+      // GSMTC settles asynchronously; give the session a beat before re-reading.
+      window.setTimeout(() => void refreshMedia(), 350);
       return;
     }
     case "stop-agent": {

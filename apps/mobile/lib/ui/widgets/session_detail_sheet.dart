@@ -108,6 +108,17 @@ class _SessionDetailSheetState extends ConsumerState<SessionDetailSheet> {
                   style: const TextStyle(fontSize: 14, height: 1.35),
                 ),
               ],
+              // The digest is the phone's substitute for a history replay:
+              // goal and open threads in a glance.
+              ref
+                  .watch(sessionDigestProvider(session.id))
+                  .when(
+                    data: (digest) => digest == null || digest.isEmpty
+                        ? const SizedBox.shrink()
+                        : _DigestBlock(digest: digest),
+                    loading: () => const SizedBox.shrink(),
+                    error: (_, _) => const SizedBox.shrink(),
+                  ),
               const SizedBox(height: 20),
               Text(
                 'RECENT ACTIVITY',
@@ -181,13 +192,13 @@ class _SessionDetailSheetState extends ConsumerState<SessionDetailSheet> {
                   ),
                 ),
               ],
-              if (session.supports('pause') ||
+              if (session.supports('interrupt') ||
                   session.supports('resume') ||
                   session.supports('stop')) ...[
                 const SizedBox(height: 16),
                 Row(
                   children: [
-                    if (session.supports('pause'))
+                    if (session.supports('interrupt'))
                       Expanded(
                         child: _ActionButton(
                           symbol: 'pause.fill',
@@ -196,7 +207,8 @@ class _SessionDetailSheetState extends ConsumerState<SessionDetailSheet> {
                           onPressed: () => _action('pause'),
                         ),
                       ),
-                    if (session.supports('pause') && session.supports('resume'))
+                    if (session.supports('interrupt') &&
+                        session.supports('resume'))
                       const SizedBox(width: 8),
                     if (session.supports('resume'))
                       Expanded(
@@ -207,7 +219,7 @@ class _SessionDetailSheetState extends ConsumerState<SessionDetailSheet> {
                           onPressed: () => _action('resume'),
                         ),
                       ),
-                    if ((session.supports('pause') ||
+                    if ((session.supports('interrupt') ||
                             session.supports('resume')) &&
                         session.supports('stop'))
                       const SizedBox(width: 8),
@@ -238,7 +250,7 @@ class _SessionDetailSheetState extends ConsumerState<SessionDetailSheet> {
     try {
       await ref
           .read(sessionsProvider.notifier)
-          .action(widget.session, 'message', payload: {'message': value});
+          .action(widget.session, 'message', payload: {'text': value});
       message.clear();
     } finally {
       if (mounted) setState(() => sending = false);
@@ -348,6 +360,41 @@ class _Timeline extends StatelessWidget {
 
   String _eventDetail(ZeusEvent event) =>
       event.command ?? event.path ?? event.tool ?? event.message ?? '';
+}
+
+class _DigestBlock extends StatelessWidget {
+  const _DigestBlock({required this.digest});
+  final SessionDigest digest;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(top: 16),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'SUMMARY',
+          style: Theme.of(context).textTheme.labelSmall?.copyWith(
+            color: Colors.white38,
+            letterSpacing: 1.0,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: 8),
+        if (digest.goal.isNotEmpty)
+          Text(digest.goal, style: const TextStyle(fontSize: 13, height: 1.35)),
+        if (digest.pending.isNotEmpty) ...[
+          const SizedBox(height: 6),
+          Text(
+            'Pending: ${digest.pending.join(' · ')}',
+            maxLines: 3,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(color: Colors.white54, fontSize: 12),
+          ),
+        ],
+      ],
+    ),
+  );
 }
 
 class _InfoRow extends StatelessWidget {

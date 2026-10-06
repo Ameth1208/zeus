@@ -37,6 +37,10 @@ const LUCIDE = {
   terminal: "terminal",
   bolt: "zap",
   play: "play",
+  music: "music",
+  pause: "pause",
+  skipForward: "skip-forward",
+  skipBack: "skip-back",
 };
 
 const BRANDS = {

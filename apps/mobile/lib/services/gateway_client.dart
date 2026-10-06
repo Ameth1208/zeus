@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
+import '../models/media_player.dart';
 import '../models/provider_info.dart';
 import '../models/zeus_event.dart';
 import '../models/zeus_session.dart';
@@ -80,6 +81,7 @@ class GatewayClient {
   Future<void> decide({
     required String requestId,
     required String sessionId,
+    required String agentId,
     required bool allow,
   }) async {
     final response = await _client.post(
@@ -87,6 +89,7 @@ class GatewayClient {
       headers: _headers,
       body: jsonEncode({
         'session_id': sessionId,
+        'agent_id': agentId,
         'kind': allow ? 'approve' : 'deny',
         'payload': {'request_id': requestId},
       }),
@@ -108,6 +111,51 @@ class GatewayClient {
         'kind': kind,
         'payload': ?payload,
       }),
+    );
+    _ensureOk(response);
+  }
+
+  /// Seconds since each desktop's last heartbeat, keyed by machine id. A phone
+  /// treats anything under ~30s as online.
+  Future<Map<String, int>> presence() async {
+    final response = await _client.get(
+      Uri.parse('$baseUrl/v1/presence'),
+      headers: _headers,
+    );
+    _ensureOk(response);
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    final out = <String, int>{};
+    for (final agent in (body['agents'] as List?) ?? const []) {
+      final map = (agent as Map).cast<String, dynamic>();
+      final id = map['machine_id'] as String?;
+      if (id == null) continue;
+      out[id] = (map['seen_secs_ago'] as num?)?.toInt() ?? 1 << 30;
+    }
+    return out;
+  }
+
+  /// Now-playing snapshots from every desktop that reports media.
+  Future<List<MediaPlayer>> media() async {
+    final response = await _client.get(
+      Uri.parse('$baseUrl/v1/media'),
+      headers: _headers,
+    );
+    _ensureOk(response);
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    return ((body['players'] as List?) ?? const [])
+        .map((e) => MediaPlayer.fromJson((e as Map).cast<String, dynamic>()))
+        .toList();
+  }
+
+  /// Enqueues a transport command for a desktop to drain on its next tick.
+  Future<void> mediaControl({
+    required String machineId,
+    required String command,
+  }) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/v1/media/control'),
+      headers: _headers,
+      body: jsonEncode({'machine_id': machineId, 'command': command}),
     );
     _ensureOk(response);
   }

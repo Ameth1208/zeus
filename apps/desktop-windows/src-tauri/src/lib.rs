@@ -20,6 +20,7 @@ use tauri::{
     tray::TrayIconBuilder,
     Emitter, LogicalSize, Manager, PhysicalPosition, WebviewWindow,
 };
+use tauri_plugin_notification::NotificationExt;
 use zeus_engine as engine;
 use zeus_engine::event::ZeusEvent;
 use zeus_engine::permission::DecisionError;
@@ -27,12 +28,14 @@ use zeus_engine::registry::RuntimeEntry;
 use zeus_engine::runtime::observed::HookEvent;
 use zeus_engine::session::SessionView;
 
+mod media;
+
 const SERVICE: &str = "ai.zeus.agent.desktop";
 const ACCOUNT: &str = "gateway";
 
 /// Panel size. Matches `PANEL_W` / `PANEL_H` in src/island/layout.ts.
 const PANEL_W: f64 = 720.0;
-const PANEL_H: f64 = 380.0;
+const PANEL_H: f64 = 360.0;
 
 /// Extra pixels around the island that still count as "over the island", so a
 /// click just past the edge does not fall through to the desktop.
@@ -346,6 +349,163 @@ fn describe(err: DecisionError) -> String {
     serde_json::to_string(&err).unwrap_or_else(|_| format!("{err:?}"))
 }
 
+// ── native notifications ─────────────────────────────────────────────────────
+
+/// Whether pushworthy engine events also raise a Windows toast. Persisted as a
+/// one-field JSON file next to the engine store, so the choice survives
+/// restarts without touching the keyring.
+struct NotificationPrefs {
+    enabled: AtomicBool,
+    path: std::path::PathBuf,
+}
+
+impl NotificationPrefs {
+    fn load(data_dir: &std::path::Path) -> Self {
+        let path = data_dir.join("notifications.json");
+        let enabled = std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+            .and_then(|v| v["enabled"].as_bool())
+            .unwrap_or(true);
+        Self {
+            enabled: AtomicBool::new(enabled),
+            path,
+        }
+    }
+
+    fn set(&self, enabled: bool) {
+        self.enabled.store(enabled, Ordering::Relaxed);
+        let _ = std::fs::write(
+            &self.path,
+            serde_json::to_string(&serde_json::json!({ "enabled": enabled }))
+                .unwrap_or_else(|_| "{}".into()),
+        );
+    }
+}
+
+#[tauri::command]
+fn get_notifications_enabled(prefs: tauri::State<'_, Arc<NotificationPrefs>>) -> bool {
+    prefs.enabled.load(Ordering::Relaxed)
+}
+
+#[tauri::command]
+fn set_notifications_enabled(prefs: tauri::State<'_, Arc<NotificationPrefs>>, enabled: bool) {
+    prefs.set(enabled);
+}
+
+/// Raises a Windows toast for an event worth interrupting the user for. The
+/// island already reacts visually; this covers the case where the user is in
+/// another window and the panel is out of sight.
+fn notify_event(app: &tauri::AppHandle, prefs: &NotificationPrefs, event: &ZeusEvent) {
+    if !prefs.enabled.load(Ordering::Relaxed) {
+        return;
+    }
+    if !event.kind.is_pushworthy() {
+        return;
+    }
+    // When the island already has focus the user is looking at it; a toast
+    // would only duplicate the mascot's reaction.
+    if let Some(window) = app.get_webview_window("main") {
+        if window.is_focused().unwrap_or(false) {
+            return;
+        }
+    }
+    let title = match event.kind {
+        engine::event::EventKind::SessionCompleted => {
+            format!("{} finished", event.runtime)
+        }
+        engine::event::EventKind::SessionFailed => format!("{} failed", event.runtime),
+        engine::event::EventKind::PermissionRequested => {
+            format!("{} needs approval", event.runtime)
+        }
+        engine::event::EventKind::InputRequested => format!("{} needs input", event.runtime),
+        _ => event.runtime.clone(),
+    };
+    if let Err(err) = app
+        .notification()
+        .builder()
+        .title(title)
+        .body(event.summary())
+        .show()
+    {
+        log_line(&format!("notification failed: {err}"));
+    }
+}
+
+// ── media commands ────────────────────────────────────────────────────────────
+
+/// What the island's media view renders. Reads GSMTC directly; an unavailable
+/// session is data, not an error.
+#[tauri::command]
+fn media_now_playing() -> media::NowPlaying {
+    media::now_playing().unwrap_or_default()
+}
+
+/// Transport control. An unknown command is a client bug, so it is an error.
+#[tauri::command]
+fn media_control(command: String) -> Result<(), String> {
+    let parsed = media::MediaCommand::parse(&command)
+        .ok_or_else(|| format!("unknown media command: {command}"))?;
+    media::control(parsed)
+}
+
+// ── media relay ───────────────────────────────────────────────────────────────
+
+/// Reports now-playing to the gateway and drains transport commands a phone
+/// enqueued. Separate from the engine relay on purpose: media is host
+/// capability, not engine domain, and a media hiccup must never stall agent
+/// traffic.
+fn spawn_media_relay(engine: Arc<engine::ZeusEngine>) {
+    std::thread::spawn(move || loop {
+        let Some(endpoint) = engine.gateway.endpoint() else {
+            std::thread::sleep(Duration::from_secs(5));
+            continue;
+        };
+        let base = endpoint.url.trim_end_matches('/').to_string();
+        let auth = format!("Bearer {}", endpoint.token);
+        let machine = engine.workstation_id().to_string();
+        let agent = ureq::Agent::config_builder()
+            .timeout_global(Some(Duration::from_secs(5)))
+            .build()
+            .new_agent();
+
+        // Report state. GSMTC failure means "no session", not an error worth
+        // backing off for.
+        if let Ok(now) = media::now_playing() {
+            let _ = agent
+                .post(&format!("{base}/v1/media/state"))
+                .header("Authorization", &auth)
+                .send_json(serde_json::json!({
+                    "machine_id": machine,
+                    "title": now.title,
+                    "artist": now.artist,
+                    "playing": now.playing,
+                }));
+        }
+
+        // Drain and apply remote commands.
+        if let Ok(mut response) = agent
+            .get(&format!("{base}/v1/media/commands?machine_id={machine}"))
+            .header("Authorization", &auth)
+            .call()
+        {
+            if let Ok(body) = response.body_mut().read_json::<serde_json::Value>() {
+                if let Some(commands) = body["commands"].as_array() {
+                    for raw in commands {
+                        if let Some(command) = raw.as_str().and_then(media::MediaCommand::parse) {
+                            if let Err(err) = media::control(command) {
+                                log_line(&format!("media command failed: {err}"));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        std::thread::sleep(Duration::from_secs(3));
+    });
+}
+
 // ── island window control ─────────────────────────────────────────────────────
 
 /// Last pushed island rect, plus the current click-through state so the
@@ -563,6 +723,7 @@ fn hotkey_plugin() -> tauri::plugin::TauriPlugin<tauri::Wry> {
 pub fn run() {
     let island_state = Arc::new(IslandState::default());
     let builder = tauri::Builder::default()
+        .plugin(tauri_plugin_notification::init())
         .plugin(hotkey_plugin())
         .manage(island_state.clone());
 
@@ -596,6 +757,10 @@ pub fn run() {
             engine_context_serena,
             engine_gateway_configure,
             engine_gateway_status,
+            get_notifications_enabled,
+            set_notifications_enabled,
+            media_now_playing,
+            media_control,
         ])
         .setup(setup)
         .build(tauri::generate_context!())
@@ -621,7 +786,7 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         .app_data_dir()
         .unwrap_or_else(|_| std::env::temp_dir().join("zeus"));
     let project_root = std::env::current_dir().unwrap_or_else(|_| data_dir.clone());
-    let zeus = engine::ZeusEngine::new(data_dir, project_root);
+    let zeus = engine::ZeusEngine::new(data_dir.clone(), project_root);
     let replayed = zeus.store.load();
     zeus.spawn_supervisor();
     log_line(&format!(
@@ -630,6 +795,7 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         zeus.store.sessions().len()
     ));
     app.manage(zeus);
+    app.manage(Arc::new(NotificationPrefs::load(&data_dir)));
 
     // Gateway credentials come from two places, in this order with this rule:
     // the OS keyring is the source of truth, and `ZEUS_GATEWAY_URL` +
@@ -689,6 +855,11 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     spawn_hit_test_loop(handle.clone(), hit_test_state.clone());
     spawn_bus_bridge(handle.clone());
 
+    // Media relay follows the gateway configuration; with no endpoint it idles
+    // cheaply and costs nothing.
+    let media_engine = app.state::<Arc<engine::ZeusEngine>>().inner().clone();
+    spawn_media_relay(media_engine);
+
     // Tray icon. The island has no window decorations and no taskbar entry, so
     // without this the app is neither findable nor quittable.
     let show = MenuItem::with_id(&handle, "show", "Show island", true, None::<&str>)?;
@@ -733,6 +904,9 @@ fn spawn_bus_bridge(app: tauri::AppHandle) {
     std::thread::spawn(move || loop {
         match receiver.blocking_recv() {
             Ok(event) => {
+                if let Some(prefs) = app.try_state::<Arc<NotificationPrefs>>() {
+                    notify_event(&app, prefs.inner(), &event);
+                }
                 let _ = app.emit("zeus://event", &event);
             }
             // A slow webview lags the channel instead of stalling a driver.

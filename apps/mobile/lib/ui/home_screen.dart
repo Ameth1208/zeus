@@ -9,6 +9,7 @@ import '../models/zeus_session.dart';
 import '../state/zeus_state.dart';
 import 'widgets/agent_island.dart';
 import 'widgets/glass_surface.dart';
+import 'widgets/media_card.dart';
 import 'widgets/session_card.dart';
 import 'widgets/session_detail_sheet.dart';
 import 'widgets/zeus_icon.dart';
@@ -37,6 +38,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final connection = ref.watch(gatewayConnectionProvider);
     final list = sessions.value ?? const <ZeusSession>[];
     final connected = connection.value?.connected == true;
+    final desktopOnline = ref.watch(anyDesktopOnlineProvider);
     final active = list.where((s) => s.isWorking || s.needsAttention).length;
     final mascotState = list.any((s) => s.needsAttention)
         ? 'waiting'
@@ -97,6 +99,33 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                                     fontSize: 13,
                                   ),
                                 ),
+                                if (connected) ...[
+                                  const SizedBox(height: 4),
+                                  Row(
+                                    children: [
+                                      Container(
+                                        width: 7,
+                                        height: 7,
+                                        decoration: BoxDecoration(
+                                          color: desktopOnline
+                                              ? const Color(0xFF6BE4A7)
+                                              : const Color(0xFFFF6B73),
+                                          shape: BoxShape.circle,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 6),
+                                      Text(
+                                        desktopOnline
+                                            ? 'Desktop online'
+                                            : 'Desktop offline',
+                                        style: const TextStyle(
+                                          color: Colors.white38,
+                                          fontSize: 11.5,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
                               ],
                             ),
                           ),
@@ -141,6 +170,24 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   padding: const EdgeInsets.fromLTRB(18, 16, 18, 42),
                   sliver: SliverList.list(
                     children: [
+                      // Music from any reporting desktop sits above the
+                      // sessions: it is ambient, not a task.
+                      if (connected)
+                        ...ref
+                            .watch(mediaProvider)
+                            .maybeWhen(
+                              data: (players) => players
+                                  .where((p) => p.hasTrack)
+                                  .map(
+                                    (p) => Padding(
+                                      padding: const EdgeInsets.only(
+                                        bottom: 12,
+                                      ),
+                                      child: MediaCard(player: p),
+                                    ),
+                                  ),
+                              orElse: () => const [],
+                            ),
                       if (connection.value?.connected != true)
                         _PairCard(mascotState: mascotState)
                       else if (sessions.isLoading && list.isEmpty)

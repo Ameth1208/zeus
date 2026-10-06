@@ -213,9 +213,9 @@ func TestDigestEndpointsRoundTrip(t *testing.T) {
 
 // The whole remote-approval loop, as it happens in production:
 //
-//   phone pairs with a code → agent event raises permission → phone POSTs its
-//   decision → gateway queues it for the desktop → desktop (agent role) fetches
-//   the action → gateway marks it done once completed.
+//	phone pairs with a code → agent event raises permission → phone POSTs its
+//	decision → gateway queues it for the desktop → desktop (agent role) fetches
+//	the action → gateway marks it done once completed.
 //
 // Every hop is separately authenticated; the queue is the only place the two
 // sides ever meet.

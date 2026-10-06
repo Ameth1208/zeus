@@ -20,6 +20,9 @@ type Server struct {
 	actionQueue    *ActionQueue
 	sessions       *SessionStore
 	providers      *ProviderRegistry
+	push           PushDispatcher
+	presenceStore  *PresenceStore
+	media          *MediaHub
 	logger         *log.Logger
 	allowedOrigins map[string]bool
 }
@@ -39,6 +42,9 @@ func NewServerWithTokens(adminToken, agentToken string, logger *log.Logger) *Ser
 		actionQueue:    NewActionQueue(),
 		sessions:       NewSessionStoreWithState(os.Getenv("ZEUS_SESSION_STATE_FILE")),
 		providers:      NewProviderRegistry(os.Getenv("ZEUS_PROVIDERS_FILE"), logger),
+		push:           NewNoopPushDispatcher(logger),
+		presenceStore:  NewPresenceStore(),
+		media:          NewMediaHub(),
 		logger:         logger,
 		allowedOrigins: parseOrigins(os.Getenv("ZEUS_ALLOWED_ORIGINS")),
 	}
@@ -58,6 +64,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/actions/stream", s.requireAgent(s.actionStream))
 	// The desktop relay polls instead of holding an SSE connection open.
 	mux.HandleFunc("GET /v1/actions", s.requireAgent(s.getActions))
+	// The relay also beats here every round so phones can tell a live desktop
+	// from a stale one.
+	mux.HandleFunc("POST /v1/presence/beat", s.requireAgent(s.presenceBeat))
+	// Now-playing: desktops report state and drain transport commands; phones
+	// read state and enqueue commands.
+	mux.HandleFunc("POST /v1/media/state", s.requireAgent(s.postMediaState))
+	mux.HandleFunc("GET /v1/media/commands", s.requireAgent(s.getMediaCommands))
 
 	// Controller-side surface. Paired desktop/mobile devices use their own token.
 	mux.HandleFunc("GET /v1/events/stream", s.requireDevice(s.eventStream))
@@ -68,6 +81,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/providers", s.requireDevice(s.listProviders))
 	mux.HandleFunc("POST /v1/chat", s.requireDevice(s.chat))
 	mux.HandleFunc("POST /v1/actions", s.requireDevice(s.postAction))
+	mux.HandleFunc("PUT /v1/devices/push-token", s.requireDevice(s.putPushToken))
+	mux.HandleFunc("GET /v1/media", s.requireDevice(s.listMedia))
+	mux.HandleFunc("POST /v1/media/control", s.requireDevice(s.postMediaControl))
 
 	// Compatibility routes for desktop/mobile and legacy clients
 	mux.HandleFunc("GET /api/health", s.health)
@@ -119,6 +135,23 @@ func (s *Server) revokeDevice(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// putPushToken registers the caller's FCM token. A device can only ever set
+// its own token: it is looked up by the credential it called with.
+func (s *Server) putPushToken(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		PushToken string `json:"push_token"`
+	}
+	if err := decodeJSON(r, &req); err != nil || strings.TrimSpace(req.PushToken) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "push_token is required"})
+		return
+	}
+	if !s.auth.SetPushToken(bearerToken(r), strings.TrimSpace(req.PushToken)) {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unknown device token"})
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *Server) postEvent(w http.ResponseWriter, r *http.Request) {
 	var e Event
 	if err := decodeJSON(r, &e); err != nil {
@@ -154,6 +187,12 @@ func (s *Server) postEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.events.Publish(e)
+	// Pushworthy events also leave through the push channel, so a phone with
+	// the app closed still hears that a task finished. No-op until FCM is
+	// configured; the filter is the same one the stream clients apply.
+	if isPushworthy(e.Type) {
+		s.push.Dispatch(e, s.auth.PushTokens())
+	}
 	writeJSON(w, http.StatusAccepted, map[string]any{"accepted": true, "session": session})
 }
 
@@ -173,7 +212,77 @@ func (s *Server) presence(w http.ResponseWriter, r *http.Request) {
 			"paired_at":     d.CreatedAt.Format(time.RFC3339),
 		})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"devices": out})
+	// Desktops beat with their machine id; a phone treats anything seen in the
+	// last few relay ticks as online.
+	agentBeats := s.presenceStore.SeenSecsAgo()
+	agents := make([]map[string]any, 0, len(agentBeats))
+	for id, secs := range agentBeats {
+		agents = append(agents, map[string]any{
+			"machine_id":    id,
+			"seen_secs_ago": secs,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"devices": out, "agents": agents})
+}
+
+// presenceBeat records a desktop heartbeat. Body: {"machine_id": "..."}.
+func (s *Server) presenceBeat(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		MachineID string `json:"machine_id"`
+	}
+	if err := decodeJSON(r, &req); err != nil || strings.TrimSpace(req.MachineID) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "machine_id is required"})
+		return
+	}
+	s.presenceStore.Beat(strings.TrimSpace(req.MachineID))
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// postMediaState records a desktop's now-playing snapshot.
+func (s *Server) postMediaState(w http.ResponseWriter, r *http.Request) {
+	var state MediaState
+	if err := decodeJSON(r, &state); err != nil || strings.TrimSpace(state.MachineID) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "machine_id is required"})
+		return
+	}
+	s.media.Report(state)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// getMediaCommands drains the pending transport commands for one machine.
+func (s *Server) getMediaCommands(w http.ResponseWriter, r *http.Request) {
+	machine := strings.TrimSpace(r.URL.Query().Get("machine_id"))
+	if machine == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "machine_id is required"})
+		return
+	}
+	commands := s.media.Drain(machine)
+	writeJSON(w, http.StatusOK, map[string]any{"commands": commands, "count": len(commands)})
+}
+
+// listMedia is what a phone renders: one now-playing snapshot per machine.
+func (s *Server) listMedia(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{"players": s.media.Players()})
+}
+
+// postMediaControl enqueues a transport command for a desktop to drain.
+func (s *Server) postMediaControl(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		MachineID string `json:"machine_id"`
+		Command   string `json:"command"`
+	}
+	if err := decodeJSON(r, &req); err != nil || strings.TrimSpace(req.MachineID) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "machine_id is required"})
+		return
+	}
+	switch strings.TrimSpace(req.Command) {
+	case "play_pause", "next", "previous":
+	default:
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported media command"})
+		return
+	}
+	s.media.Enqueue(strings.TrimSpace(req.MachineID), strings.TrimSpace(req.Command))
+	w.WriteHeader(http.StatusAccepted)
 }
 
 // putDigest receives the desktop's short session summary.
@@ -275,6 +384,11 @@ func (s *Server) postAction(w http.ResponseWriter, r *http.Request) {
 		capability := a.Kind
 		if a.Kind == "message" {
 			capability = "send"
+		}
+		if a.Kind == "pause" {
+			// The engine names the capability after what the driver does:
+			// pausing a turn is interrupting it.
+			capability = "interrupt"
 		}
 		if !hasCapability(session.Capabilities, capability) {
 			writeJSON(w, http.StatusConflict, map[string]string{"error": "runtime does not advertise this capability"})

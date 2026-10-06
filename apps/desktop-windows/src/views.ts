@@ -7,7 +7,7 @@ import { colorForProject, describeEvent } from "./zeus/frames";
 import { ICONS, getAgentIcon } from "./views/icons";
 import { svg } from "./views/dom";
 import { Ticker } from "./views/ticker";
-import type { PendingRequest, RuntimeEntry } from "./engine/client";
+import type { NowPlaying, PendingRequest, RuntimeEntry } from "./engine/client";
 
 export interface AgentCardInfo {
   id: string;
@@ -49,12 +49,15 @@ export const ViewData = {
   hostState: "online" as "online" | "offline",
   gatewayState: "offline" as "online" | "connecting" | "offline",
   soundOn: true,
+  /** Windows toasts on pushworthy events; persisted by the host, not localStorage. */
+  notificationsOn: true,
   disablePoking: localStorage.getItem("zeus_disable_poking") === "true",
   autoCloseSec: parseInt(localStorage.getItem("zeus_autoclose") || "15", 10),
   gatewayUrl: localStorage.getItem("zeus_gateway_url") || "http://127.0.0.1:8080",
   gatewayToken: localStorage.getItem("zeus_gateway_token") || "local-dev",
   launchRuntime: "",
   launchCwd: localStorage.getItem("zeus_launch_cwd") || "",
+  media: { available: false, title: "", artist: "", playing: false } as NowPlaying,
   busyAction: "" as "" | "launch" | "send" | "save-gateway",
   error: "",
   events: [] as EventItem[],
@@ -81,6 +84,9 @@ export function renderHeader(activeView: IslandViewName, soundEnabled: boolean):
         <button class="tab icon-only ${activeView === "launcher" ? "on" : ""}" data-nav="launcher"  title="Launch an agent" aria-label="Launch an agent">
           ${svg(ICONS.plus, 14).outerHTML}
         </button>
+        <button class="tab icon-only ${activeView === "media" ? "on" : ""}" data-nav="media" title="Music" aria-label="Music">
+          ${svg(ICONS.music, 14).outerHTML}
+        </button>
       </div>
       <div class="header-actions">
         <button class="tab ${activeView === "settings" ? "on" : ""}" data-nav="settings" title="Settings">
@@ -105,6 +111,12 @@ export function renderViewContent(view: IslandViewName): string {
       return renderPromptView();
     case "launcher":
       return renderLauncherView();
+    case "finished":
+      return renderTerminalView(true);
+    case "error":
+      return renderTerminalView(false);
+    case "media":
+      return renderMediaView();
     case "settings":
       return renderSettingsView();
     case "overview":
@@ -336,6 +348,44 @@ function renderLauncherView(): string {
     </div>`;
 }
 
+/** The terminal views share a shape: a wash card, the outcome, and the next
+ *  move. `finished` offers continuing the session; `error` explains the
+ *  failure. Both unpin on dismiss. */
+function renderTerminalView(success: boolean): string {
+  const session = ViewData.focus ?? (ViewData.sessions.length > 0 ? ViewData.sessions[0] : null);
+  const runtime = session?.runtime || "agent";
+  const message = session?.message || (success ? "Task completed" : "The session failed");
+  const color = success ? "#22C55E" : "#F4505E";
+  const wash = success ? "rgba(34, 197, 94, 0.4)" : "rgba(244, 80, 94, 0.45)";
+  const canContinue = !!session && session.capabilities.includes("send");
+
+  return `
+    <div class="view on">
+      <div class="card wash" style="--wash: ${wash};">
+        <div class="approval-body">
+          <div class="approval-lead">
+            <i class="dot" style="width:8px;height:8px;background:${color}"></i>
+            <span class="approval-agent">${esc(runtime)}</span>
+            <span class="approval-time">${success ? "task completed" : "session failed"}</span>
+          </div>
+          <div class="approval-summary" title="${esc(message)}">${esc(message)}</div>
+          <div class="approval-actions">
+            <button class="btn secondary" data-act="dismiss-terminal" title="Dismiss">
+              <span>Dismiss</span><span class="kbd">Esc</span>
+            </button>
+            ${
+              canContinue
+                ? `<button class="btn primary" data-act="next-task" title="Send the next instruction">
+                     <span>Next task</span>
+                   </button>`
+                : ""
+            }
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
+
 function renderEmptyView(): string {
   const cards = ViewData.runtimes
     .map((entry) => {
@@ -357,7 +407,6 @@ function renderEmptyView(): string {
     <div class="view on">
       <div class="card" style="height: 100%; padding: 0;">
         <div class="empty-hero">
-          <div class="empty-hero-mascot">${svg(getAgentIcon("zeus"), 24).outerHTML}</div>
           <div class="empty-hero-title">Zeus Agent Control Plane</div>
           <div class="empty-hero-sub">${
             ViewData.hostState === "online"
@@ -427,6 +476,38 @@ function renderSessionComposer(): string {
     </div>`;
 }
 
+/** Now-playing and transport, straight from the host's media session. When
+ *  nothing is playing the view says so instead of hiding: the tab is always in
+ *  the header. */
+function renderMediaView(): string {
+  const media = ViewData.media;
+  return `
+    <div class="view on">
+      <div class="card">
+        <div class="media-body">
+          <div class="media-track">
+            <span class="media-note">${svg(ICONS.music, 18).outerHTML}</span>
+            <div class="media-text">
+              <div class="media-title">${esc(media.available && media.title ? media.title : "Nothing playing")}</div>
+              <div class="media-artist">${esc(media.available ? media.artist || "Unknown artist" : "Start music on this PC and it shows up here")}</div>
+            </div>
+          </div>
+          <div class="media-controls">
+            <button class="media-btn" data-act="media-previous" title="Previous" ${media.available ? "" : "disabled"}>
+              ${svg(ICONS.skipBack, 16).outerHTML}
+            </button>
+            <button class="media-btn primary" data-act="media-playpause" title="${media.playing ? "Pause" : "Play"}" ${media.available ? "" : "disabled"}>
+              ${svg(media.playing ? ICONS.pause : ICONS.play, 18).outerHTML}
+            </button>
+            <button class="media-btn" data-act="media-next" title="Next" ${media.available ? "" : "disabled"}>
+              ${svg(ICONS.skipForward, 16).outerHTML}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
+
 function renderSettingsView(): string {
   const isPokingDisabled = ViewData.disablePoking;
   const isSoundOn = ViewData.soundOn;
@@ -468,6 +549,13 @@ function renderSettingsView(): string {
               <div class="settings-toggle-sub">Audio cues on state change</div>
             </div>
             <button class="switch ${isSoundOn ? "on" : ""}" data-act="toggle-sound-switch" title="Toggle sound"></button>
+          </div>
+          <div class="settings-toggle-row">
+            <div>
+              <div class="settings-toggle-title">System Notifications</div>
+              <div class="settings-toggle-sub">Windows toast when a task finishes or needs you</div>
+            </div>
+            <button class="switch ${ViewData.notificationsOn ? "on" : ""}" data-act="toggle-notifications" title="Toggle system notifications"></button>
           </div>
 
           <!-- Runtimes, with the capabilities this machine actually has. -->

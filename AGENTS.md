@@ -200,12 +200,19 @@ npm run tauri build   # release exe + msi + nsis
 Non-negotiable, because the desktop island is a transparent always-on-top panel
 and the design only works as a set:
 
-- Island body is **flat `#000`**. Cards `#141518`, flat cards `#0e0f11`.
-  Hairlines are white at **3.5%**. There is no `backdrop-filter` glassmorphism —
-  the "glass" is the transparent window over the desktop.
-- Geometry is mode + view → `(w, h, radius, topRadius)` via `island/layout.ts`.
-  `topRadius` sign encodes the silhouette: positive = convex top corners,
-  negative = concave ear cutouts. Do not replace this with `border-radius`.
+- The island body is **liquid glass**, not flat black: fill `--glass-fill`
+  (`rgba(16,18,23,0.58)`) over `backdrop-filter: blur(30px) saturate(170%)`,
+  a 1 px `--glass-edge` hairline, an inset top highlight and the specular
+  `#island::before` sheen. The window stays transparent; the material is what
+  sells the depth. Cards are white at 5.5%, flat cards at 3.5%, hairlines at
+  8% — all translucent, so the blur reads through every layer.
+- The aesthetic reference is Apple's materials (macOS `NSVisualEffectView`,
+  Grokbot-style frosted panels). On macOS use `.ultraThinMaterial`; on mobile
+  `BackdropFilter`. Never paint an opaque surface where a material belongs.
+- Geometry is mode + view → `(w, h, radius)` via `island/layout.ts`. The
+  silhouette is plain `border-radius` (`0 0 r r`, flush against the top edge);
+  `island/shape.ts` and its `topRadius` ear cutouts are retired legacy — do
+  not resurrect them without redesigning hit-testing too.
 - **Growth springs, shrink curves.** Growth overshoots, shrink does not. Asymmetric
   animation is what makes the island read as a physical object.
 - Content cross-fade: exit 160 ms, enter 300 ms delayed 160 ms.

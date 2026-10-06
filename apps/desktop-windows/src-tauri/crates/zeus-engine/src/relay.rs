@@ -128,8 +128,25 @@ impl Relay {
 
         let sent = Self::upload_events(engine, &agent, &endpoint)?;
         Self::upload_digests(engine, &agent, &endpoint)?;
+        Self::beat(engine, &agent, &endpoint)?;
         Self::handle_commands(engine, &agent, &endpoint)?;
         Ok(sent)
+    }
+
+    /// One heartbeat per round: this is how a phone knows the desktop is alive
+    /// even when no session has moved.
+    fn beat(
+        engine: &Arc<ZeusEngine>,
+        agent: &ureq::Agent,
+        endpoint: &Endpoint,
+    ) -> Result<(), String> {
+        let url = format!("{}/v1/presence/beat", endpoint.url.trim_end_matches('/'));
+        agent
+            .post(&url)
+            .header("Authorization", &format!("Bearer {}", endpoint.token))
+            .send_json(serde_json::json!({"machine_id": engine.workstation_id()}))
+            .map_err(|e| e.to_string())?;
+        Ok(())
     }
 
     fn upload_events(
@@ -141,12 +158,23 @@ impl Relay {
         if pending.is_empty() {
             return Ok(0);
         }
+        // The gateway merges `metadata.capabilities` into its session record;
+        // without it the mobile app cannot know a session accepts messages.
+        let capabilities: std::collections::HashMap<String, Vec<String>> = engine
+            .views()
+            .into_iter()
+            .map(|view| (view.id, view.capabilities))
+            .collect();
         let mut sent = 0usize;
         for event in &pending {
             if sent >= MAX_EVENTS_PER_POST {
                 break;
             }
-            let body = to_gateway_event(event, engine.workstation_id());
+            let caps = capabilities
+                .get(&event.session_id)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
+            let body = to_gateway_event(event, engine.workstation_id(), caps);
             let url = format!("{}/v1/events", endpoint.url.trim_end_matches('/'));
             match agent
                 .post(&url)
@@ -199,27 +227,36 @@ impl Relay {
         agent: &ureq::Agent,
         endpoint: &Endpoint,
     ) -> Result<(), String> {
-        let url = format!("{}/v1/actions", endpoint.url.trim_end_matches('/'));
-        let mut response = agent
-            .get(&url)
-            .header("Authorization", &format!("Bearer {}", endpoint.token))
-            .call()
-            .map_err(|e| e.to_string())?;
-        let payload: serde_json::Value =
-            response.body_mut().read_json().map_err(|e| e.to_string())?;
-        let actions = payload["actions"].as_array().cloned().unwrap_or_default();
-        for raw in actions {
-            let Ok(action) = serde_json::from_value::<GatewayAction>(raw) else {
-                continue;
-            };
-            let outcome = Self::apply_command(engine, &action);
-            Self::complete(engine, agent, endpoint, &action.id, &outcome);
+        // Drain per owned session, never the whole queue: with several desktops
+        // on one gateway, an unfiltered drain would steal another machine's
+        // actions and fail them against the wrong session.
+        for session in engine.views() {
+            let url = format!(
+                "{}/v1/actions?agent_id={}",
+                endpoint.url.trim_end_matches('/'),
+                session.id
+            );
+            let mut response = agent
+                .get(&url)
+                .header("Authorization", &format!("Bearer {}", endpoint.token))
+                .call()
+                .map_err(|e| e.to_string())?;
+            let payload: serde_json::Value =
+                response.body_mut().read_json().map_err(|e| e.to_string())?;
+            let actions = payload["actions"].as_array().cloned().unwrap_or_default();
+            for raw in actions {
+                let Ok(action) = serde_json::from_value::<GatewayAction>(raw) else {
+                    continue;
+                };
+                let outcome = Self::apply_command(engine, &action);
+                Self::report(&action, &outcome);
+            }
         }
         Ok(())
     }
 
     /// Executes one remote command against the local authority. The result is
-    /// what we report to the gateway — including refusals.
+    /// logged — including refusals.
     fn apply_command(engine: &Arc<ZeusEngine>, action: &GatewayAction) -> Result<(), String> {
         match action.kind.as_str() {
             "approve" | "deny" => {
@@ -240,7 +277,17 @@ impl Relay {
                     })
                     .map_err(|e| describe_refusal(&e))?
             }
-            "interrupt" => engine
+            // A phone dictating the next instruction: same path as the island's
+            // composer, same capability gate inside SessionManager.
+            "message" => {
+                let text = action
+                    .payload
+                    .as_ref()
+                    .and_then(|p| p["text"].as_str())
+                    .ok_or_else(|| "message action is missing text".to_string())?;
+                engine.send(&action.session_id, text)
+            }
+            "interrupt" | "pause" => engine
                 .sessions
                 .interrupt(&action.session_id)
                 .map_err(|e| e.to_string()),
@@ -248,52 +295,42 @@ impl Relay {
                 .sessions
                 .stop(&action.session_id)
                 .map_err(|e| e.to_string()),
+            "resume" => engine
+                .resume(&action.session_id)
+                .map(|_| ())
+                .map_err(|e| e.to_string()),
             other => Err(format!("unknown command: {other}")),
         }
     }
 
-    fn complete(
-        engine: &Arc<ZeusEngine>,
-        agent: &ureq::Agent,
-        endpoint: &Endpoint,
-        action_id: &str,
-        outcome: &Result<(), String>,
-    ) {
-        let url = format!(
-            "{}/v1/actions/{}",
-            endpoint.url.trim_end_matches('/'),
-            action_id
-        );
-        let note = match outcome {
-            Ok(()) => "done",
-            Err(reason) => reason,
-        };
-        let result = agent
-            .post(&url)
-            .header("Authorization", &format!("Bearer {}", endpoint.token))
-            .send_json(
-                serde_json::json!({"result": note, "session_id": engine_gateway_session(engine)}),
-            );
-        if let Err(err) = result {
-            log(&format!(
-                "relay: could not mark action {action_id} done: {err}"
-            ));
+    /// The gateway has no action-ack endpoint; the queue is drained on fetch,
+    /// so the outcome lives in the desktop log where a refusal can be seen.
+    fn report(action: &GatewayAction, outcome: &Result<(), String>) {
+        match outcome {
+            Ok(()) => log(&format!(
+                "relay: action {} ({}) done",
+                action.id, action.kind
+            )),
+            Err(reason) => log(&format!(
+                "relay: action {} ({}) refused: {reason}",
+                action.id, action.kind
+            )),
         }
     }
 
     /// Builds the upload form of a normalized event. Nothing but what a session
     /// card on a phone can show; internal-only fields stay local.
     #[cfg(test)]
-    fn event_for_gateway(event: &ZeusEvent, workstation: &str) -> GatewayEvent {
-        to_gateway_event(event, workstation)
+    fn event_for_gateway(
+        event: &ZeusEvent,
+        workstation: &str,
+        capabilities: &[String],
+    ) -> GatewayEvent {
+        to_gateway_event(event, workstation, capabilities)
     }
 }
 
-fn engine_gateway_session(engine: &Arc<ZeusEngine>) -> Option<String> {
-    engine.store.sessions().first().map(|s| s.id.clone())
-}
-
-fn to_gateway_event(event: &ZeusEvent, workstation: &str) -> GatewayEvent {
+fn to_gateway_event(event: &ZeusEvent, workstation: &str, capabilities: &[String]) -> GatewayEvent {
     let metadata = {
         let mut value = serde_json::json!({});
         if let Some(usage) = event.payload.get("usage") {
@@ -304,6 +341,9 @@ fn to_gateway_event(event: &ZeusEvent, workstation: &str) -> GatewayEvent {
         }
         if let Some(decision) = event.payload.get("decision") {
             value["decision"] = decision.clone();
+        }
+        if !capabilities.is_empty() {
+            value["capabilities"] = serde_json::json!(capabilities);
         }
         if value.as_object().map(|o| o.is_empty()).unwrap_or(true) {
             None
@@ -409,7 +449,7 @@ mod tests {
             .with_tool("shell")
             .with_field("command", serde_json::json!("cargo test"))
             .with_field("path", serde_json::json!("src/main.rs"));
-        let body = Relay::event_for_gateway(&event, "ws-1");
+        let body = Relay::event_for_gateway(&event, "ws-1", &[]);
         assert_eq!(body.kind, "tool.started");
         assert_eq!(body.tool.as_deref(), Some("shell"));
         assert_eq!(body.command.as_deref(), Some("cargo test"));
@@ -420,9 +460,20 @@ mod tests {
     #[test]
     fn thinking_has_no_text_and_no_metadata_bag() {
         let event = ZeusEvent::new("s1", "codex", 1, EventKind::AgentThinking);
-        let body = Relay::event_for_gateway(&event, "ws-1");
+        let body = Relay::event_for_gateway(&event, "ws-1", &[]);
         assert!(body.message.is_none());
         assert!(body.metadata.is_none());
+    }
+
+    #[test]
+    fn capabilities_ride_in_metadata_for_the_gateway_merge() {
+        let event = ZeusEvent::new("s1", "codex", 1, EventKind::SessionStarted);
+        let caps = vec!["send".to_string(), "stop".to_string()];
+        let body = Relay::event_for_gateway(&event, "ws-1", &caps);
+        assert_eq!(
+            body.metadata.as_ref().unwrap()["capabilities"],
+            serde_json::json!(["send", "stop"])
+        );
     }
 
     #[test]

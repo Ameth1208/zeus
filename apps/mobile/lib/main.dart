@@ -16,11 +16,11 @@ class ZeusApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => MaterialApp(
-        title: 'Zeus',
-        debugShowCheckedModeBanner: false,
-        theme: ZeusTheme.dark(),
-        darkTheme: ZeusTheme.dark(),
-        themeMode: ThemeMode.dark,
-        home: const HomeScreen(),
-      );
+    title: 'Zeus',
+    debugShowCheckedModeBanner: false,
+    theme: ZeusTheme.dark(),
+    darkTheme: ZeusTheme.dark(),
+    themeMode: ThemeMode.dark,
+    home: const HomeScreen(),
+  );
 }
