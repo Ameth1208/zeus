@@ -46,11 +46,25 @@ export class IslandFsm {
     }
   }
 
+  /// The summon key cycles expanded -> compact -> hidden -> expanded. Hiding is
+  /// never its own entry point here; `forceHide` is bound separately so a user
+  /// who wants it gone can make it gone.
   toggle(): void {
     if (this.mode === "expanded") {
       this.forceCompact();
+    } else if (this.mode === "compact") {
+      this.forceExpanded();
     } else {
       this.forceExpanded();
+    }
+  }
+
+  /// Hides the island hard and stays hidden until summoned. A pending approval
+  /// may summon it again — that is deliberate: attention beats a pinned hide.
+  forceHide(): void {
+    this.cancelTimers();
+    if (this.mode !== "hidden") {
+      this.transition("hidden");
     }
   }
 

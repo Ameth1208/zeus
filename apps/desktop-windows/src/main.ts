@@ -1,34 +1,31 @@
+// Island bootstrap.
+//
+// The webview's whole job: build the shell, hand the island its DOM, and render
+// whatever the engine reports. It owns no process, no socket and no store, which
+// is why hiding the island or reloading this page cannot disturb a running agent.
+//
+// What changed from the gateway-polling version: the data source is now local.
+// `engine_sessions` reads the machine's own store, so the island works with no
+// network, and remote approval arrives as a relayed command instead of a poll.
+
 import "./styles.css";
-import { invoke } from "@tauri-apps/api/core";
 import { Island } from "./island";
 import { ViewData, renderHeader, renderViewContent, renderCompactContent } from "./views";
-import { colorForProject, describeEvent, type Session } from "./zeus/frames";
+import { uiStateForSessions, frameFor, describeEvent, type Session } from "./zeus/frames";
 import { Sound } from "./core/sound";
-
-type Credentials = { gateway: string; token: string };
+import * as zeus from "./engine/client";
 
 function diag(msg: string): void {
-  void invoke("log_diag", { msg }).catch(() => {});
+  void zeus.logDiag(msg);
 }
 
 window.addEventListener("error", (e) => diag(`ERROR ${e.message} @${e.filename}:${e.lineno}`));
 window.addEventListener("unhandledrejection", (e) => diag(`REJECT ${String(e.reason)}`));
 
-let credentials: Credentials | null = null;
-try {
-  credentials = await invoke("load_credentials");
-  diag(`load_credentials ok paired=${credentials !== null}`);
-} catch (e) {
-  diag(`load_credentials failed ${String(e)}`);
-}
-
-let eventSourceAbort: AbortController | null = null;
-let isDemoMode = false;
-
-ViewData.paired = credentials !== null;
 ViewData.soundOn = Sound.isEnabled;
 
-// Build Coucou DOM shell
+// Build the island DOM shell. Unchanged from the original layout: the visual
+// design is not affected by where the data comes from.
 const root = document.querySelector<HTMLDivElement>("#app") || document.body;
 root.innerHTML = `
   <div id="wake-strip"></div>
@@ -47,8 +44,8 @@ const islandEl = document.querySelector<HTMLElement>("#island")!;
 const clipEl = document.querySelector<HTMLElement>("#island-clip")!;
 const compactContentEl = document.querySelector<HTMLElement>("#compact-content")!;
 const contentEl = document.querySelector<HTMLElement>("#content")!;
-const botCanvasEl = document.querySelector<HTMLCanvasElement>("#bot-canvas")!;
 const countdownEl = document.querySelector<HTMLElement>("#countdown")!;
+const botCanvasEl = document.querySelector<HTMLCanvasElement>("#bot-canvas")!;
 
 const island = new Island({
   root,
@@ -60,9 +57,7 @@ const island = new Island({
   content: contentEl,
   countdown: countdownEl,
   onPushRect: (rect) => {
-    void invoke("set_island_rect", { rect }).catch((err) => {
-      diag(`set_island_rect err: ${String(err)}`);
-    });
+    void zeus.setIslandRect(rect).catch((err) => diag(`set rect failed: ${String(err)}`));
   },
   onViewChange: (view) => {
     ViewData.activeView = view;
@@ -72,7 +67,6 @@ const island = new Island({
 
 diag(`island booted mode=${island.mode} view=${island.view}`);
 
-// Render views into #content
 function render(): void {
   compactContentEl.innerHTML = renderCompactContent();
   contentEl.innerHTML = `
@@ -87,93 +81,187 @@ function render(): void {
   }
 }
 
-// Tick loop for ticker animations
-function loop(now: number): void {
-  if (island.mode === "expanded" && island.view === "overview") {
-    ViewData.ticker.tick(now);
-  }
-  requestAnimationFrame(loop);
+let tickerFrame: number | null = null;
+
+// The ticker owns a frame only while it is visibly moving. A static island must
+// not keep the webview's compositor awake.
+function kickTicker(): void {
+  if (tickerFrame != null || island.mode !== "expanded" || island.view !== "overview") return;
+  tickerFrame = requestAnimationFrame(tickTicker);
 }
-requestAnimationFrame(loop);
+
+function tickTicker(now: number): void {
+  tickerFrame = null;
+  if (island.mode !== "expanded" || island.view !== "overview") return;
+  ViewData.ticker.tick(now);
+  if (ViewData.ticker.animating) tickerFrame = requestAnimationFrame(tickTicker);
+}
 
 render();
 
-// Clicking island when compact expands it
-islandEl.addEventListener("mousedown", (e) => {
-  const me = e as MouseEvent;
-  const t = me.target as HTMLElement;
+void zeus.loadCredentials().then((credentials) => {
+  if (!credentials) return;
+  ViewData.gatewayUrl = credentials.gateway;
+  ViewData.gatewayToken = credentials.token;
+  return zeus.configureGateway(credentials).then(refreshGatewayStatus);
+}).catch((err) => diag(`load credentials failed: ${String(err)}`));
 
-  // Let interactive controls handle their own clicks
+async function refreshGatewayStatus(): Promise<void> {
+  const status = await zeus.gatewayStatus();
+  ViewData.gatewayState = status.state;
+  render();
+}
+
+// Clicking the island while compact expands it. Controls handle their own
+// clicks; everything else is a hit on the mascot or the bar.
+islandEl.addEventListener("mousedown", (e) => {
+  const t = e.target as HTMLElement;
+
   if (t.closest("button, input, textarea, select, a, .pill, .switch, .seg, .compact-btn, .cli-cmd-pill, .cli-run-btn, .cli-agent-badge")) {
-    void invoke("focus_window").catch(() => {});
+    void zeus.focusWindow();
     return;
   }
 
-  // If in compact mode, clicking anywhere (on Zeus avatar or the bar) immediately opens the island!
   if (island.mode === "compact") {
     island.expand("overview");
-    void invoke("focus_window").catch(() => {});
-    return;
+    void zeus.focusWindow();
   }
 });
 
-// Ensure transparent window has Windows OS keyboard focus whenever inputs are interacted with
+// Windows drops keyboard focus onto the panel whenever an input is used.
 document.addEventListener("focusin", (e) => {
   const t = e.target as HTMLElement;
   if (t.tagName === "INPUT" || t.tagName === "TEXTAREA") {
-    void invoke("focus_window").catch(() => {});
+    void zeus.focusWindow();
   }
 });
 
-// Event delegation for actions and navigation
+// ── data ──────────────────────────────────────────────────────────────────────
+
+/** Pulls the local snapshot. Cheap enough to call on every event. */
+async function refresh(): Promise<void> {
+  try {
+    const [sessions, pending] = await Promise.all([zeus.sessions(), zeus.pending()]);
+    ViewData.sessions = sessions as Session[];
+    ViewData.pending = pending;
+    ViewData.runtimes = await zeus.runtimes();
+    ViewData.hostState = "online";
+    if (ViewData.focus) {
+      const updated = ViewData.sessions.find((s) => s.id === ViewData.focus?.id);
+      if (updated) ViewData.focus = updated;
+    } else if (ViewData.sessions.length > 0) {
+      ViewData.focus = ViewData.sessions[0];
+    }
+    syncMascotAndTicker();
+    render();
+  } catch (err) {
+    // The engine being unreachable means the host is gone; the island should say
+    // so rather than pretending everything is idle.
+    diag(`refresh failed: ${String(err)}`);
+    ViewData.hostState = "offline";
+    island.setBotState("interrupted");
+    render();
+  }
+}
+
+/**
+ * One mascot for the whole island, so the state is the most urgent thing across
+ * every session rather than only the focused one.
+ */
+let lastPinnedRequest = "";
+
+/**
+ * One mascot for the whole island, so the state is the most urgent thing across
+ * every session rather than only the focused one.
+ */
+function syncMascotAndTicker(): void {
+  const state = uiStateForSessions(ViewData.sessions as Session[]);
+  island.setBotState(frameFor(state));
+
+  if (state === "waitingApproval") {
+    const request = ViewData.pending[0];
+    ViewData.focus =
+      ViewData.sessions.find((session) => session.id === request?.session_id) ?? ViewData.focus;
+    // Expand on entry, not on refresh: a repeat tick must not re-pin the island
+    // after the user has already chosen to hide it.
+    if (lastPinnedRequest !== (request?.request_id ?? "")) {
+      lastPinnedRequest = request?.request_id ?? "";
+      island.fsm.pinned = true;
+      island.setView("approval");
+    }
+  } else if (state === "waitingInput") {
+    ViewData.focus = ViewData.sessions.find((session) => session.last_event === "input.requested") ?? ViewData.focus;
+    island.fsm.pinned = true;
+    island.setView("question");
+  } else if (island.fsm.view === "approval" || island.fsm.view === "question") {
+    island.fsm.pinned = false;
+    island.setView("overview");
+  }
+
+  const focus = ViewData.focus;
+  if (!focus) {
+    ViewData.ticker.sync(["Zeus is watching your agent CLIs"], 0);
+    return;
+  }
+
+  const tool = focus.capabilities.find((c) => c.startsWith("tool:"))?.slice(5);
+  ViewData.ticker.sync(
+    [
+      describeEvent(focus),
+      focus.message || `Status: ${focus.status}`,
+      tool ? `Tool: ${tool}` : focus.mode === "observed" ? "Observed via hooks" : "Watching workspace",
+    ].filter(Boolean),
+    0,
+  );
+  kickTicker();
+}
+
+// ── actions ───────────────────────────────────────────────────────────────────
+
 document.addEventListener("click", async (e) => {
   const t = e.target as HTMLElement;
 
-  // Quick CLI command buttons
   const cmdBtn = t.closest<HTMLElement>("[data-cmd]");
   if (cmdBtn) {
     e.stopPropagation();
-    const cmd = cmdBtn.dataset.cmd!;
     const input = document.querySelector<HTMLInputElement>("#prompt-input");
     if (input) {
-      if (cmd === "status") input.value = "git status && agy status";
-      else if (cmd === "test") input.value = "run tests and report failures";
-      else if (cmd === "review") input.value = "review recent diffs and security risks";
+      const cmd = cmdBtn.dataset.cmd!;
+      if (cmd === "status") input.value = "git status";
+      else if (cmd === "test") input.value = "run the tests and report failures";
+      else if (cmd === "review") input.value = "review the recent diff for security risks";
       input.focus();
     }
     return;
   }
 
-  // View navigation tabs
   const navBtn = t.closest<HTMLElement>("[data-nav]");
   if (navBtn) {
     e.stopPropagation();
-    const nav = navBtn.dataset.nav as "overview" | "prompt" | "settings";
     Sound.play("blip");
-    island.setView(nav);
-    void invoke("focus_window").catch(() => {});
+    island.setView(navBtn.dataset.nav as "overview" | "launcher" | "prompt" | "settings");
+    void zeus.focusWindow();
     render();
     return;
   }
 
-  // Action buttons and switches
   const actBtn = t.closest<HTMLElement>("[data-act]");
-  if (actBtn) {
-    e.stopPropagation();
-    const act = actBtn.dataset.act!;
+  if (!actBtn) return;
+  e.stopPropagation();
+  const act = actBtn.dataset.act!;
 
-    if (act === "cycle-agent") {
+  switch (act) {
+    case "cycle-agent": {
       if (ViewData.sessions.length === 0) return;
-      const curIdx = ViewData.focus ? ViewData.sessions.findIndex((s) => s.id === ViewData.focus?.id) : -1;
-      const nextIdx = (curIdx + 1) % ViewData.sessions.length;
-      ViewData.focus = ViewData.sessions[nextIdx];
+      const index = ViewData.focus ? ViewData.sessions.findIndex((s) => s.id === ViewData.focus?.id) : -1;
+      ViewData.focus = ViewData.sessions[(index + 1) % ViewData.sessions.length];
       Sound.play("blip");
       syncMascotAndTicker();
       render();
       return;
     }
-
-    if (act === "toggle-sound" || act === "toggle-sound-switch") {
+    case "toggle-sound":
+    case "toggle-sound-switch": {
       const next = !Sound.isEnabled;
       Sound.setEnabled(next);
       ViewData.soundOn = next;
@@ -181,325 +269,287 @@ document.addEventListener("click", async (e) => {
       render();
       return;
     }
-
-    if (act === "toggle-poking") {
+    case "toggle-poking": {
       ViewData.disablePoking = !ViewData.disablePoking;
       localStorage.setItem("zeus_disable_poking", String(ViewData.disablePoking));
       Sound.play("blip");
       render();
       return;
     }
-
-    if (act === "connect-gateway") {
-      const input = document.querySelector<HTMLInputElement>("#gateway-url-input");
-      const tokenInput = document.querySelector<HTMLInputElement>("#gateway-token-input");
-      const gw = input?.value.trim() || "http://127.0.0.1:8080";
-      const token = tokenInput?.value.trim() || ViewData.gatewayToken || "local-dev";
-      ViewData.gatewayUrl = gw;
-      ViewData.gatewayToken = token;
-      localStorage.setItem("zeus_gateway_url", gw);
-      localStorage.setItem("zeus_gateway_token", token);
-      void connectToGateway(gw, token);
+    case "choose-runtime": {
+      ViewData.launchRuntime = actBtn.dataset.runtime ?? "";
+      ViewData.error = "";
+      island.setView("launcher");
+      render();
+      window.setTimeout(() => document.querySelector<HTMLInputElement>("#launch-cwd")?.focus(), 0);
       return;
     }
-
-    if (act === "sync-sessions") {
-      if (credentials) void fetchSessions(credentials.gateway, credentials.token);
-      Sound.play("blip");
+    case "open-question": {
+      island.fsm.pinned = true;
+      island.setView("question");
+      render();
+      window.setTimeout(() => document.querySelector<HTMLInputElement>("#question-answer")?.focus(), 0);
       return;
     }
-
-    if (act === "stop-agent") {
-      const f = ViewData.focus;
-      if (f && credentials) {
-        const gw = credentials.gateway.replace(/\/+$/, "");
-        void fetch(`${gw}/v1/actions`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${credentials.token}`,
-          },
-          body: JSON.stringify({
-            session_id: f.id,
-            agent_id: f.agent_id,
-            kind: "stop",
-          }),
-        }).catch(() => {});
-        f.status = "stopped";
-        syncMascotAndTicker();
+    case "launch-session": {
+      const runtime = document.querySelector<HTMLSelectElement>("#launch-runtime")?.value.trim() ?? "";
+      const cwd = document.querySelector<HTMLInputElement>("#launch-cwd")?.value.trim() ?? "";
+      const prompt = document.querySelector<HTMLInputElement>("#launch-prompt")?.value.trim() ?? "";
+      if (!runtime || !cwd) {
+        ViewData.error = "Choose an installed runtime and a working folder.";
+        render();
+        return;
+      }
+      ViewData.launchRuntime = runtime;
+      ViewData.launchCwd = cwd;
+      localStorage.setItem("zeus_launch_cwd", cwd);
+      ViewData.busyAction = "launch";
+      ViewData.error = "";
+      render();
+      try {
+        const sessionId = await zeus.launch(runtime, cwd, prompt || undefined);
+        await refresh();
+        ViewData.focus = ViewData.sessions.find((session) => session.id === sessionId) ?? ViewData.focus;
+        island.setView("overview");
+        Sound.play("approve");
+      } catch (err) {
+        ViewData.error = String(err);
+        diag(`launch failed: ${String(err)}`);
+      } finally {
+        ViewData.busyAction = "";
         render();
       }
       return;
     }
-
-    if (act === "approve") {
+    case "send-message": {
+      const focus = ViewData.focus;
+      const input = document.querySelector<HTMLInputElement>("#session-message");
+      const message = input?.value.trim() ?? "";
+      if (!focus?.live || !focus.capabilities.includes("send") || !message) return;
+      ViewData.busyAction = "send";
+      ViewData.error = "";
+      if (input) input.disabled = true;
+      try {
+        await zeus.send(focus.id, message);
+        if (input) input.value = "";
+      } catch (err) {
+        ViewData.error = String(err);
+        diag(`send failed: ${String(err)}`);
+      } finally {
+        ViewData.busyAction = "";
+        await refresh();
+      }
+      return;
+    }
+    case "send-answer": {
+      const focus = ViewData.focus;
+      const input = document.querySelector<HTMLInputElement>("#question-answer");
+      const answer = input?.value.trim() ?? "";
+      if (!focus?.live || !focus.capabilities.includes("send") || !answer) return;
+      ViewData.busyAction = "send";
+      ViewData.error = "";
+      try {
+        await zeus.send(focus.id, answer);
+        island.fsm.pinned = false;
+        island.setView("overview");
+      } catch (err) {
+        ViewData.error = String(err);
+        diag(`answer failed: ${String(err)}`);
+      } finally {
+        ViewData.busyAction = "";
+        await refresh();
+      }
+      return;
+    }
+    case "save-gateway": {
+      const gateway = document.querySelector<HTMLInputElement>("#gateway-url-input")?.value.trim() ?? "";
+      const token = document.querySelector<HTMLInputElement>("#gateway-token-input")?.value.trim() ?? "";
+      if (!gateway) {
+        ViewData.error = "Enter the Gateway URL.";
+        render();
+        return;
+      }
+      ViewData.busyAction = "save-gateway";
+      ViewData.error = "";
+      try {
+        await zeus.saveCredentials({ gateway, token });
+        await zeus.configureGateway({ gateway, token });
+        ViewData.gatewayUrl = gateway;
+        ViewData.gatewayToken = token;
+        localStorage.removeItem("zeus_gateway_token");
+        localStorage.setItem("zeus_gateway_url", gateway);
+        await refreshGatewayStatus();
+        Sound.play("approve");
+      } catch (err) {
+        ViewData.error = String(err);
+        diag(`save gateway failed: ${String(err)}`);
+      } finally {
+        ViewData.busyAction = "";
+        render();
+      }
+      return;
+    }
+    case "stop-agent": {
+      const focus = ViewData.focus;
+      if (!focus) return;
+      // Only offered when the runtime can actually be stopped; an observed
+      // session has no button at all.
+      if (!focus.capabilities.includes("stop")) return;
+      await zeus.stop(focus.id).catch((err) => diag(`stop failed: ${String(err)}`));
+      await refresh();
+      return;
+    }
+    case "interrupt-agent": {
+      const focus = ViewData.focus;
+      if (!focus || !focus.capabilities.includes("interrupt")) return;
+      await zeus.interrupt(focus.id).catch((err) => diag(`interrupt failed: ${String(err)}`));
+      await refresh();
+      return;
+    }
+    case "approve":
       Sound.play("approve");
-      handleDecision(true);
+      await decidePending(true);
       return;
-    }
-
-    if (act === "deny") {
+    case "deny":
       Sound.play("deny");
-      handleDecision(false);
+      await decidePending(false);
       return;
-    }
-
-    if (act === "focus-session") {
-      const id = actBtn.dataset.id;
-      const s = ViewData.sessions.find((x) => x.id === id);
-      if (s) {
-        ViewData.focus = s;
+    case "focus-session": {
+      const found = ViewData.sessions.find((s) => s.id === actBtn.dataset.id);
+      if (found) {
+        ViewData.focus = found;
         Sound.play("blip");
         syncMascotAndTicker();
         render();
       }
       return;
     }
-  }
-
-  // Quick connect button
-  if (t.id === "btn-quick-connect") {
-    const input = document.querySelector<HTMLInputElement>("#gateway-url-input") ||
-      document.querySelector<HTMLInputElement>("#gateway-url");
-    const gw = input?.value || "http://127.0.0.1:8080";
-    connectToGateway(gw);
-    return;
+    default:
+      return;
   }
 });
 
-// Keyboard shortcuts: Y/Enter allow, N deny, Esc collapse, Enter in inputs
+/**
+ * Answers the oldest open request. The engine owns validation, so a stale or
+ * replayed reply is refused there; the UI only has to not pretend it worked.
+ */
+async function decidePending(allow: boolean): Promise<void> {
+  const request = ViewData.pending[0];
+  if (!request) {
+    island.setBotState("idle");
+    island.setView("overview");
+    render();
+    return;
+  }
+  try {
+    await zeus.decide(request.request_id, request.session_id, allow);
+  } catch (err) {
+    const message = String(err);
+    diag(`decision refused: ${message}`);
+    ViewData.error = zeus.describeRefusal(message);
+  }
+  ViewData.pending = ViewData.pending.filter((p) => p.request_id !== request.request_id);
+  island.fsm.pinned = false;
+  await refresh();
+}
+
+// ── keyboard ──────────────────────────────────────────────────────────────────
+
 window.addEventListener("keydown", (e) => {
   const activeInput = document.activeElement as HTMLInputElement | null;
   if (activeInput && activeInput.tagName === "INPUT") {
-    if (e.key === "Enter") {
-      if (activeInput.id === "gateway-url-input" || activeInput.id === "gateway-token-input") {
-        e.preventDefault();
-        const gwInput = document.querySelector<HTMLInputElement>("#gateway-url-input");
-        const tokenInput = document.querySelector<HTMLInputElement>("#gateway-token-input");
-        const gw = gwInput?.value.trim() || "http://127.0.0.1:8080";
-        const token = tokenInput?.value.trim() || ViewData.gatewayToken || "local-dev";
-        ViewData.gatewayUrl = gw;
-        ViewData.gatewayToken = token;
-        localStorage.setItem("zeus_gateway_url", gw);
-        localStorage.setItem("zeus_gateway_token", token);
-        void connectToGateway(gw, token);
-        return;
-      }
+    if (e.key === "Enter" && activeInput.id === "launch-prompt") {
+      e.preventDefault();
+      document.querySelector<HTMLElement>('[data-act="launch-session"]')?.click();
+      return;
     }
-    if (e.key === "Escape") {
-      activeInput.blur();
+    if (e.key === "Enter" && activeInput.id === "session-message") {
+      e.preventDefault();
+      document.querySelector<HTMLElement>('[data-act="send-message"]')?.click();
+      return;
+    }
+    if (e.key === "Enter" && activeInput.id === "question-answer") {
+      e.preventDefault();
+      document.querySelector<HTMLElement>('[data-act="send-answer"]')?.click();
+      return;
+    }
+    if (e.key === "Enter" && (activeInput.id === "gateway-url-input" || activeInput.id === "gateway-token-input")) {
+      e.preventDefault();
+      document.querySelector<HTMLElement>('[data-act="save-gateway"]')?.click();
+      return;
+    }
+    if (e.key === "Escape") activeInput.blur();
+    return;
+  }
+
+  if (island.mode !== "expanded") return;
+
+  if (island.view === "approval") {
+    if (e.key === "y" || e.key === "Y" || e.key === "Enter") {
+      e.preventDefault();
+      Sound.play("approve");
+      void decidePending(true);
+      return;
+    }
+    if (e.key === "n" || e.key === "N") {
+      e.preventDefault();
+      Sound.play("deny");
+      void decidePending(false);
       return;
     }
   }
 
-  if (island.mode === "expanded") {
-    if (island.view === "approval") {
-      if (e.key === "y" || e.key === "Y" || e.key === "Enter") {
-        e.preventDefault();
-        Sound.play("approve");
-        handleDecision(true);
-        return;
-      }
-      if (e.key === "n" || e.key === "N") {
-        e.preventDefault();
-        Sound.play("deny");
-        handleDecision(false);
-        return;
-      }
-    }
-    if (e.key === "Escape" && !island.fsm.pinned) {
-      island.collapse();
-    }
+  if (e.key === "Escape" && !island.fsm.pinned) {
+    island.collapse();
   }
 });
 
-function handleDecision(allow: boolean): void {
-  const f = ViewData.focus;
-  if (!f) {
-    island.setView("overview");
-    return;
-  }
+// ── engine events ─────────────────────────────────────────────────────────────
 
-  if (credentials) {
-    const cred = credentials;
-    const gw = cred.gateway.replace(/\/+$/, "");
-    void fetch(`${gw}/v1/actions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${cred.token}`,
-      },
-      body: JSON.stringify({
-        session_id: f.id,
-        agent_id: f.agent_id,
-        kind: allow ? "approve" : "deny",
-        payload: {
-          request_id: f.pending_request_id || "",
-        },
-      }),
-    })
-      .catch(() => {
-        return fetch(`${gw}/api/sessions/${f.id}/permission`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${cred.token}`,
-          },
-          body: JSON.stringify({ decision: allow ? "allow" : "deny" }),
-        });
-      })
-      .catch((err) => diag(`decision post error: ${String(err)}`));
-  }
+void zeus.onEvent((event) => {
+  ViewData.events.push({
+    id: event.event_id,
+    time: new Date(event.time).toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    }),
+    session_id: event.session_id,
+    agent_id: event.session_id,
+    runtime: event.runtime,
+    type: event.kind,
+    message: typeof event.payload.text === "string" ? event.payload.text : undefined,
+    tool: typeof event.payload.tool === "string" ? event.payload.tool : undefined,
+    path: typeof event.payload.path === "string" ? event.payload.path : undefined,
+    command: typeof event.payload.command === "string" ? event.payload.command : undefined,
+  });
+  if (ViewData.events.length > 50) ViewData.events.shift();
 
-  f.status = allow ? "working" : "idle";
-  island.fsm.pinned = false;
-  island.setBotState(allow ? "working" : "idle");
+  // Track the last kind on the session so the mascot can tell an approval from a
+  // question without the UI knowing anything about the runtime.
+  const session = ViewData.sessions.find((s) => s.id === event.session_id);
+  if (session) {
+    session.last_event = event.kind;
+    if (typeof event.payload.text === "string" && event.payload.text) {
+      session.message = event.payload.text;
+    }
+  }
   syncMascotAndTicker();
-  island.setView("overview");
   render();
-}
+});
 
-function syncMascotAndTicker(): void {
-  const f = ViewData.focus ?? (ViewData.sessions.length > 0 ? ViewData.sessions[0] : null);
-  if (!f) {
-    island.setBotState("idle");
-    ViewData.ticker.sync(["Zeus Gateway Online", "Monitoring Active Workspaces"], 0);
+// Ctrl+Shift+Space summons the island. When it is up, the same stroke dismisses
+// it fully — Expanded state is "visible", Hidden state is "gone".
+void zeus.onHotkey(() => {
+  if (island.mode === "expanded" || island.mode === "compact") {
+    island.hide();
     return;
   }
+  island.expand("overview");
+  void zeus.focusWindow();
+});
 
-  if (f.status === "waiting") {
-    island.setBotState("approval");
-    island.fsm.pinned = true;
-    island.setView("approval");
-  } else if (f.status === "working") {
-    island.setBotState("working");
-  } else if (f.status === "finished") {
-    island.setBotState("finished");
-  } else {
-    island.setBotState("idle");
-  }
-
-  const steps = [
-    describeEvent(f),
-    f.message ? f.message : `Status: ${f.status}`,
-    f.capabilities?.length ? `Tools: ${f.capabilities.join(", ")}` : "Watching workspace",
-  ].filter(Boolean);
-
-  ViewData.ticker.sync(steps, 0);
-}
-
-// ── Gateway Connection ────────────────────────────────────────────────────────
-async function connectToGateway(gwUrl: string, tokenOverride?: string): Promise<void> {
-  const base = gwUrl.replace(/\/+$/, "");
-  const token = tokenOverride || ViewData.gatewayToken || "local-dev";
-  diag(`connecting to gateway at ${base} with token=${token}`);
-  try {
-    const res = await fetch(`${base}/health`).catch(() => fetch(`${base}/api/health`));
-    if (!res.ok) throw new Error(`Gateway returned HTTP ${res.status}`);
-
-    credentials = { gateway: base, token };
-    ViewData.paired = true;
-    ViewData.gatewayUrl = base;
-    ViewData.gatewayToken = token;
-    ViewData.error = "";
-
-    void invoke("save_credentials", { credentials }).catch(() => {});
-    diag(`gateway connection success, token=${token}`);
-
-    // Fetch live sessions
-    await fetchSessions(base, token);
-
-    // Stream live events
-    startEventStream(base, token);
-
-    render();
-  } catch (err) {
-    diag(`gateway connection failed: ${String(err)}`);
-    ViewData.paired = false;
-    ViewData.error = String(err);
-    render();
-  }
-}
-
-async function fetchSessions(base: string, token: string): Promise<void> {
-  try {
-    const res = await fetch(`${base}/v1/sessions`, {
-      headers: { Authorization: `Bearer ${token}` },
-    }).catch(() =>
-      fetch(`${base}/api/sessions`, {
-        headers: { Authorization: `Bearer ${token}` },
-      }),
-    );
-
-    if (res.ok) {
-      const data = await res.json();
-      if (data && Array.isArray(data.sessions)) {
-        ViewData.sessions = data.sessions;
-        if (!ViewData.focus && data.sessions.length > 0) {
-          ViewData.focus = data.sessions[0];
-        } else if (ViewData.focus) {
-          const updated = data.sessions.find((s: Session) => s.id === ViewData.focus?.id);
-          if (updated) ViewData.focus = updated;
-        }
-        syncMascotAndTicker();
-        render();
-      }
-    }
-  } catch (err) {
-    diag(`fetch sessions err: ${String(err)}`);
-  }
-}
-
-function startEventStream(base: string, token: string): void {
-  if (eventSourceAbort) eventSourceAbort.abort();
-  eventSourceAbort = new AbortController();
-
-  const url = `${base}/v1/events/stream?token=${encodeURIComponent(token)}`;
-  const es = new EventSource(url);
-
-  es.onmessage = (e) => {
-    try {
-      const data = JSON.parse(e.data);
-      diag(`event received: ${data.type || "unknown"}`);
-
-      if (data.session_id) {
-        ViewData.events.push({
-          id: data.id || String(Date.now()),
-          time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
-          session_id: data.session_id,
-          agent_id: data.agent_id || "",
-          runtime: data.runtime || "Agent",
-          type: data.type || "event",
-          message: data.message,
-          tool: data.tool,
-          path: data.path,
-          command: data.command,
-        });
-        if (ViewData.events.length > 50) ViewData.events.shift();
-
-        // Refresh sessions to reflect the updated state
-        void fetchSessions(base, token);
-      }
-    } catch (err) {
-      diag(`parse event error: ${String(err)}`);
-    }
-  };
-
-  es.onerror = () => {
-    diag("EventSource error, reconnecting in 3s…");
-    es.close();
-    setTimeout(() => {
-      if (ViewData.paired && credentials) startEventStream(credentials.gateway, credentials.token);
-    }, 3000);
-  };
-}
-
-// Auto-sync polling every 4 seconds in the background
-setInterval(() => {
-  if (ViewData.paired && credentials) {
-    void fetchSessions(credentials.gateway, credentials.token);
-  }
-}, 4000);
-
-// Auto-connect to gateway on boot
-void connectToGateway(ViewData.gatewayUrl, ViewData.gatewayToken);
+void refresh();
+// A slow heartbeat keeps durations and elapsed counters honest without polling
+// the engine on every animation frame.
+window.setInterval(() => void refresh(), 4000);

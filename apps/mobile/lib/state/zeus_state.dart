@@ -91,3 +91,26 @@ final sessionEventsProvider = FutureProvider.family<List<ZeusEvent>, String>((re
   if (client == null) return const [];
   return client.sessionEvents(sessionId);
 });
+
+/// The summary a phone shows instead of a history replay.
+final sessionDigestProvider = FutureProvider.family<SessionDigest?, String>((ref, sessionId) async {
+  final client = ref.watch(gatewayClientProvider);
+  if (client == null) return null;
+  return client.digest(sessionId);
+});
+
+/// Answers an approval. The desktop decides; a refusal here is a real refusal,
+/// not a transport hiccup, so the caller must not present it as approved.
+Future<void> decideRequest({
+  required String requestId,
+  required String sessionId,
+  required bool allow,
+  required Ref ref,
+}) async {
+  final client = ref.read(gatewayClientProvider);
+  if (client == null) {
+    throw StateError('Not paired with a gateway.');
+  }
+  await client.decide(requestId: requestId, sessionId: sessionId, allow: allow);
+  await ref.read(sessionsProvider.notifier).refresh();
+}

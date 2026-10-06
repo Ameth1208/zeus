@@ -1,0 +1,82 @@
+{
+  "_provenance": "`initialize` response and one notification captured verbatim from `codex app-server 0.159.3` over stdio on Windows, 2026-10-02. Item/turn/approval shapes are transcribed from the CLI's own `codex app-server generate-json-schema --out` output (v1 + v2 schema files) rather than captured from a live turn, and are labelled as such.",
+  "captured": [
+    {
+      "id": 1,
+      "result": {
+        "userAgent": "zeus/0.159.3 (Windows 10.0.26200; x86_64)",
+        "codexHome": "C:\\Users\\USUARIO\\.codex",
+        "platformFamily": "windows",
+        "platformOs": "windows"
+      }
+    },
+    {
+      "method": "remoteControl/status/changed",
+      "params": {
+        "status": "disabled",
+        "serverName": "DESKTOP-QVPQ5FI"
+      },
+      "emittedAtMs": 1790961844213
+    }
+  ],
+  "fromSchema": {
+    "thread_started": {
+      "method": "thread/started",
+      "params": { "thread": { "id": "thread-1", "cwd": "C:\\repo" } }
+    },
+    "turn_started": {
+      "method": "turn/started",
+      "params": { "threadId": "thread-1", "turnId": "turn-1" }
+    },
+    "agent_delta": {
+      "method": "item/agentMessage/delta",
+      "params": { "itemId": "item-1", "delta": "All" }
+    },
+    "command_started": {
+      "method": "item/started",
+      "params": {
+        "item": {
+          "id": "item-2",
+          "type": "commandExecution",
+          "command": ["cargo", "test"],
+          "cwd": "C:\\repo"
+        }
+      }
+    },
+    "command_failed": {
+      "method": "item/completed",
+      "params": {
+        "item": {
+          "id": "item-2",
+          "type": "commandExecution",
+          "command": ["cargo", "test"],
+          "exitCode": 101,
+          "aggregatedOutput": "error: 1 test failed"
+        }
+      }
+    },
+    "file_change": {
+      "method": "item/started",
+      "params": {
+        "item": {
+          "id": "item-3",
+          "type": "fileChange",
+          "changes": [{ "path": "src/main.rs", "kind": "update" }]
+        }
+      }
+    },
+    "approval": {
+      "id": 42,
+      "method": "item/commandExecution/requestApproval",
+      "params": { "itemId": "item-2", "command": ["cargo", "test"] }
+    },
+    "turn_completed": {
+      "method": "turn/completed",
+      "params": { "threadId": "thread-1", "turnId": "turn-1", "status": "completed" }
+    },
+    "error": {
+      "method": "error",
+      "params": { "message": "model overloaded" }
+    }
+  }
+}

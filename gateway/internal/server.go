@@ -54,12 +54,17 @@ func (s *Server) Handler() http.Handler {
 
 	// Agent-side surface. The local runtime adapters use ZEUS_AGENT_TOKEN.
 	mux.HandleFunc("POST /v1/events", s.requireAgent(s.postEvent))
+	mux.HandleFunc("PUT /v1/sessions/{id}/digest", s.requireAgent(s.putDigest))
 	mux.HandleFunc("GET /v1/actions/stream", s.requireAgent(s.actionStream))
+	// The desktop relay polls instead of holding an SSE connection open.
+	mux.HandleFunc("GET /v1/actions", s.requireAgent(s.getActions))
 
 	// Controller-side surface. Paired desktop/mobile devices use their own token.
 	mux.HandleFunc("GET /v1/events/stream", s.requireDevice(s.eventStream))
 	mux.HandleFunc("GET /v1/sessions", s.requireDevice(s.listSessions))
+	mux.HandleFunc("GET /v1/presence", s.requireDevice(s.presence))
 	mux.HandleFunc("GET /v1/sessions/{id}/events", s.requireDevice(s.sessionEvents))
+	mux.HandleFunc("GET /v1/sessions/{id}/digest", s.requireDevice(s.getDigest))
 	mux.HandleFunc("GET /v1/providers", s.requireDevice(s.listProviders))
 	mux.HandleFunc("POST /v1/chat", s.requireDevice(s.chat))
 	mux.HandleFunc("POST /v1/actions", s.requireDevice(s.postAction))
@@ -120,9 +125,19 @@ func (s *Server) postEvent(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid event"})
 		return
 	}
-	if e.SessionID == "" || e.AgentID == "" || e.Runtime == "" || e.Type == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "session_id, agent_id, runtime and type are required"})
+	// A desktop sends `kind`, the older adapters send `type`. Either is enough;
+	// neither is not.
+	if e.SessionID == "" || e.AgentID == "" || e.Runtime == "" || (e.Type == "" && e.Kind == "") {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "session_id, agent_id, runtime and kind are required"})
 		return
+	}
+	// A desktop sends `kind`; the older adapters send `type`. One table serves
+	// both, so fold them before anything reads the event.
+	if e.Kind != "" {
+		e.Type = e.Kind
+	}
+	if e.ID == "" {
+		e.ID = e.EventID
 	}
 	if e.ID == "" {
 		e.ID = randomToken(12)
@@ -130,9 +145,62 @@ func (s *Server) postEvent(w http.ResponseWriter, r *http.Request) {
 	if e.Timestamp.IsZero() {
 		e.Timestamp = time.Now().UTC()
 	}
-	s.sessions.Apply(e)
+	session, accepted := s.sessions.Apply(e)
+	if !accepted {
+		// A duplicate or out-of-order event. Acknowledged so a retrying hook
+		// stops retrying, but not broadcast: replaying it would rewind the
+		// session for every connected client.
+		writeJSON(w, http.StatusOK, map[string]any{"accepted": false, "session": session})
+		return
+	}
 	s.events.Publish(e)
-	writeJSON(w, http.StatusAccepted, e)
+	writeJSON(w, http.StatusAccepted, map[string]any{"accepted": true, "session": session})
+}
+
+// presence lists paired devices and how long since each was seen. A phone uses
+// it to tell live machines from stale ones; a revoked device simply disappears.
+func (s *Server) presence(w http.ResponseWriter, r *http.Request) {
+	devices := s.auth.Devices()
+	now := time.Now().UTC()
+	out := make([]map[string]any, 0, len(devices))
+	for _, d := range devices {
+		out = append(out, map[string]any{
+			"device_id": d.ID,
+			"name":      d.Name,
+			// Seconds since the last authenticated call beats a raw timestamp:
+			// a phone wants "was it alive recently", and that avoids clock skew.
+			"seen_secs_ago": int(now.Sub(d.LastSeen).Seconds()),
+			"paired_at":     d.CreatedAt.Format(time.RFC3339),
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"devices": out})
+}
+
+// putDigest receives the desktop's short session summary.
+func (s *Server) putDigest(w http.ResponseWriter, r *http.Request) {
+	var d SessionDigest
+	if err := decodeJSON(r, &d); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid digest"})
+		return
+	}
+	if d.SessionID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "session_id is required"})
+		return
+	}
+	s.sessions.PutDigest(d)
+	writeJSON(w, http.StatusAccepted, d)
+}
+
+func (s *Server) getDigest(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	d, ok := s.sessions.Digest(id)
+	if !ok {
+		// No digest yet is a normal state, not an error: the desktop uploads one
+		// lazily, once a session has produced something worth summarising.
+		writeJSON(w, http.StatusOK, map[string]any{"digest": nil})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"digest": d})
 }
 
 func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
@@ -204,7 +272,11 @@ func (s *Server) postAction(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	case "message", "stop", "pause", "resume":
-		if !hasCapability(session.Capabilities, a.Kind) {
+		capability := a.Kind
+		if a.Kind == "message" {
+			capability = "send"
+		}
+		if !hasCapability(session.Capabilities, capability) {
 			writeJSON(w, http.StatusConflict, map[string]string{"error": "runtime does not advertise this capability"})
 			return
 		}
@@ -226,6 +298,16 @@ func (s *Server) postAction(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) eventStream(w http.ResponseWriter, r *http.Request) {
 	streamSSE(s.events, w, r, func(e Event) bool { return true })
+}
+
+// getActions drains the per-agent queue in one call. The SSE stream is the
+// low-latency path; this is the crash-safe one the desktop relay uses, because
+// a dropped SSE connection must not lose an approval decision.
+func (s *Server) getActions(w http.ResponseWriter, r *http.Request) {
+	// Empty id drains the whole queue; both tiers share the same default.
+	agent := r.URL.Query().Get("agent_id")
+	items := s.actionQueue.Drain(agent)
+	writeJSON(w, http.StatusOK, map[string]any{"actions": items, "count": len(items)})
 }
 
 func (s *Server) actionStream(w http.ResponseWriter, r *http.Request) {

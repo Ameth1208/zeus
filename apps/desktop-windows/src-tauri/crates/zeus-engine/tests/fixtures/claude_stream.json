@@ -1,0 +1,92 @@
+{
+  "_provenance": "`system` messages captured verbatim from `claude -p --input-format stream-json --output-format stream-json --verbose` on Windows, 2026-10-02. assistant/user/result shapes are transcribed from Claude Code's documented stream-json message types and are labelled as such. On the capture machine no assistant turn was authenticated, so those lines were not exercised end to end here.",
+  "captured": [
+    {
+      "type": "system",
+      "subtype": "hook_started",
+      "hook_id": "2ffff30d-4920-427a-ae4b-58ef8e025c21",
+      "hook_name": "SessionStart:startup",
+      "hook_event": "SessionStart",
+      "session_id": "9397884d-43ea-4664-bced-81e947a6fffe"
+    },
+    {
+      "type": "system",
+      "subtype": "hook_response",
+      "hook_id": "2ffff30d-4920-427a-ae4b-58ef8e025c21",
+      "hook_name": "SessionStart:startup",
+      "hook_event": "SessionStart",
+      "exit_code": 0,
+      "outcome": "success",
+      "session_id": "9397884d-43ea-4664-bced-81e947a6fffe"
+    }
+  ],
+  "documented": {
+    "init": {
+      "type": "system",
+      "subtype": "init",
+      "session_id": "9397884d-43ea-4664-bced-81e947a6fffe",
+      "cwd": "C:\\repo",
+      "model": "claude-opus-5"
+    },
+    "assistant_text": {
+      "type": "assistant",
+      "session_id": "9397884d-43ea-4664-bced-81e947a6fffe",
+      "message": { "content": [{ "type": "text", "text": "All" }] }
+    },
+    "assistant_tool": {
+      "type": "assistant",
+      "session_id": "9397884d-43ea-4664-bced-81e947a6fffe",
+      "message": {
+        "content": [
+          {
+            "type": "tool_use",
+            "id": "toolu_1",
+            "name": "Bash",
+            "input": { "command": "cargo test" }
+          }
+        ]
+      }
+    },
+    "tool_result_ok": {
+      "type": "user",
+      "session_id": "9397884d-43ea-4664-bced-81e947a6fffe",
+      "message": {
+        "content": [
+          {
+            "type": "tool_result",
+            "tool_use_id": "toolu_1",
+            "content": "test result: ok. 12 passed"
+          }
+        ]
+      }
+    },
+    "tool_result_error": {
+      "type": "user",
+      "session_id": "9397884d-43ea-4664-bced-81e947a6fffe",
+      "message": {
+        "content": [
+          {
+            "type": "tool_result",
+            "tool_use_id": "toolu_1",
+            "is_error": true,
+            "content": "exit 101: 1 test failed"
+          }
+        ]
+      }
+    },
+    "result_success": {
+      "type": "result",
+      "subtype": "success",
+      "session_id": "9397884d-43ea-4664-bced-81e947a6fffe",
+      "result": "All green.",
+      "duration_ms": 13043,
+      "num_turns": 1,
+      "total_cost_usd": 0.0412,
+      "usage": {
+        "input_tokens": 16409,
+        "output_tokens": 19,
+        "cache_read_input_tokens": 0
+      }
+    }
+  }
+}

@@ -1,0 +1,86 @@
+{
+  "_provenance": "Captured verbatim from `agy 1.2.14 --input-format stream-json --output-format stream-json` on Windows, 2026-10-02. `tools` array truncated for readability; the normalizer does not read it.",
+  "lines": [
+    {
+      "event": "init",
+      "conversation_id": "53006b4f-7898-4317-be6a-cfc9489bb37f",
+      "init": {
+        "cwd": "C:\\repo",
+        "permission_mode": "request-review"
+      }
+    },
+    {
+      "event": "step_update",
+      "step_update": {
+        "conversation_id": "53006b4f-7898-4317-be6a-cfc9489bb37f",
+        "step_index": 0,
+        "state": "DONE",
+        "step_type": "user_input"
+      }
+    },
+    {
+      "event": "step_update",
+      "step_update": {
+        "conversation_id": "53006b4f-7898-4317-be6a-cfc9489bb37f",
+        "step_index": 1,
+        "state": "ACTIVE",
+        "step_type": "agent_response",
+        "text_delta": "All"
+      }
+    },
+    {
+      "event": "step_update",
+      "step_update": {
+        "conversation_id": "53006b4f-7898-4317-be6a-cfc9489bb37f",
+        "step_index": 1,
+        "state": "ACTIVE",
+        "step_type": "agent_response",
+        "text_delta": " green."
+      }
+    },
+    {
+      "event": "step_update",
+      "step_update": {
+        "conversation_id": "53006b4f-7898-4317-be6a-cfc9489bb37f",
+        "step_index": 1,
+        "state": "DONE",
+        "step_type": "agent_response",
+        "duration_seconds": 12.794022,
+        "usage": {
+          "input_tokens": 16409,
+          "output_tokens": 19,
+          "thinking_tokens": 18,
+          "cache_read_tokens": 0,
+          "total_tokens": 16428
+        }
+      }
+    },
+    {
+      "event": "result",
+      "result": {
+        "conversation_id": "53006b4f-7898-4317-be6a-cfc9489bb37f",
+        "status": "SUCCESS",
+        "response": "All green.\n",
+        "duration_seconds": 13.0439305,
+        "num_turns": 1,
+        "usage": {
+          "input_tokens": 16409,
+          "output_tokens": 19,
+          "thinking_tokens": 18,
+          "cache_read_tokens": 0,
+          "total_tokens": 16428
+        }
+      }
+    },
+    {
+      "event": "result",
+      "result": {
+        "conversation_id": "bad-conversation",
+        "status": "ERROR",
+        "response": "",
+        "error": "stream input message is missing the \"event\" field",
+        "num_turns": 0
+      }
+    }
+  ]
+}

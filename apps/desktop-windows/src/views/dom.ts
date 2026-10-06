@@ -26,8 +26,9 @@ export function h<K extends keyof HTMLElementTagNameMap>(
   return el;
 }
 
+/** Raw inner SVG markup — either a single path `d` or multi-element content. */
 export function svg(
-  path: string,
+  artwork: string | { inner: string; stroke: boolean },
   size = 14,
   opts: { fill?: string; stroke?: number } = {},
 ): SVGSVGElement {
@@ -36,8 +37,24 @@ export function svg(
   el.setAttribute("width", String(size));
   el.setAttribute("height", String(size));
   el.setAttribute("aria-hidden", "true");
+
+  // A vendored icon: inner markup draws itself, color inherits from currentColor.
+  if (typeof artwork !== "string" && "inner" in artwork) {
+    if (artwork.stroke) {
+      el.setAttribute("fill", "none");
+      el.setAttribute("stroke", "currentColor");
+      el.setAttribute("stroke-width", "2");
+      el.setAttribute("stroke-linecap", "round");
+      el.setAttribute("stroke-linejoin", "round");
+    } else {
+      el.setAttribute("fill", opts.fill ?? "currentColor");
+    }
+    el.innerHTML = artwork.inner;
+    return el;
+  }
+
   const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
-  p.setAttribute("d", path);
+  p.setAttribute("d", artwork);
   if (opts.stroke) {
     p.setAttribute("fill", "none");
     p.setAttribute("stroke", "currentColor");

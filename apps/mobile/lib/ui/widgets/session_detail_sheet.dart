@@ -127,7 +127,7 @@ class _SessionDetailSheetState extends ConsumerState<SessionDetailSheet> {
                       padding: EdgeInsets.symmetric(vertical: 12),
                       child: LinearProgressIndicator(minHeight: 2),
                     ),
-                    error: (_, __) => const Text(
+                    error: (_, _) => const Text(
                       'Activity is temporarily unavailable.',
                       style: TextStyle(color: Colors.white38, fontSize: 12),
                     ),
@@ -152,7 +152,7 @@ class _SessionDetailSheetState extends ConsumerState<SessionDetailSheet> {
                   ],
                 ),
               ],
-              if (session.supports('message')) ...[
+              if (session.canSend) ...[
                 const SizedBox(height: 24),
                 TextField(
                   controller: message,
@@ -257,8 +257,9 @@ class _SessionDetailSheetState extends ConsumerState<SessionDetailSheet> {
               ? {'request_id': widget.session.pendingRequestId}
               : null,
         );
-    if ((action == 'approve' || action == 'deny') && mounted)
+    if ((action == 'approve' || action == 'deny') && mounted) {
       Navigator.of(context).pop();
+    }
   }
 }
 

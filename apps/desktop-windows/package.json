@@ -13,6 +13,8 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.8.0",
+    "lucide-static": "^1.50.0",
+    "simple-icons": "^16.33.0",
     "typescript": "^5.9.2",
     "vite": "^7.1.5"
   }

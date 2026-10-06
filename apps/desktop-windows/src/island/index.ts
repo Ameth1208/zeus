@@ -92,6 +92,11 @@ export class Island {
     this.kick();
   }
 
+  hide(): void {
+    this.fsm.forceHide();
+    this.kick();
+  }
+
   setView(view: IslandViewName): void {
     this.fsm.view = view;
     if (this.fsm.mode !== "expanded") {
@@ -148,6 +153,7 @@ export class Island {
       this.pointer.x = e.clientX;
       this.pointer.y = e.clientY;
       this.engine.setMouse(e.clientX, e.clientY);
+      this.kick();
     });
 
     window.addEventListener("pointerleave", () => {
@@ -206,8 +212,7 @@ export class Island {
       s === "searching" ||
       s === "working" ||
       s === "dizzy" ||
-      s === "love" ||
-      this.fsm.mode === "expanded"
+      s === "love"
     );
   }
 

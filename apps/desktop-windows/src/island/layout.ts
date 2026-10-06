@@ -10,6 +10,7 @@ export type IslandViewName =
   | "question"
   | "error"
   | "finished"
+  | "launcher"
   | "prompt"
   | "settings";
 
@@ -40,16 +41,25 @@ export const EXPANDED_CORNER = 22;
 export const WAKE_STRIP_W = 240;
 export const WAKE_STRIP_H = 12;
 
+// Heights measured against real content: a view that shows buttons must have
+// room for them plus breathing space. A view too short squeezes text over the
+// mascot; too tall floats the island in empty wash.
 export const VIEW_LAYOUTS: Record<IslandViewName, ViewLayout> = {
-  overview: { height: 160, botX: 68, botY: null, botDiameter: 58, agentMode: "pills", wash: null },
-  empty: { height: 160, botX: 70, botY: null, botDiameter: 62, agentMode: "none", wash: null },
-  approval: { height: 160, botX: 62, botY: null, botDiameter: 56, agentMode: "column", wash: "rgba(245,165,36,0.38)" },
-  question: { height: 160, botX: 62, botY: null, botDiameter: 56, agentMode: "column", wash: "rgba(34,211,238,0.32)" },
-  error: { height: 160, botX: 62, botY: null, botDiameter: 58, agentMode: "column", wash: "rgba(244,80,94,0.45)" },
-  finished: { height: 160, botX: 62, botY: null, botDiameter: 58, agentMode: "column", wash: "rgba(34,197,94,0.4)" },
-  prompt: { height: 190, botX: 54, botY: null, botDiameter: 46, agentMode: "column", wash: null },
-  settings: { height: 230, botX: 60, botY: 125, botDiameter: 50, agentMode: "none", wash: null },
+  overview: { height: 176, botX: 68, botY: null, botDiameter: 58, agentMode: "pills", wash: null },
+  empty: { height: 168, botX: 70, botY: null, botDiameter: 62, agentMode: "none", wash: null },
+  // Approval carries two buttons and a command line; give it the most room.
+  approval: { height: 204, botX: 62, botY: null, botDiameter: 56, agentMode: "column", wash: "rgba(245,165,36,0.38)" },
+  question: { height: 200, botX: 62, botY: null, botDiameter: 56, agentMode: "column", wash: "rgba(34,211,238,0.32)" },
+  error: { height: 176, botX: 62, botY: null, botDiameter: 58, agentMode: "column", wash: "rgba(244,80,94,0.45)" },
+  finished: { height: 168, botX: 62, botY: null, botDiameter: 58, agentMode: "column", wash: "rgba(34,197,94,0.4)" },
+  launcher: { height: 272, botX: 54, botY: 152, botDiameter: 46, agentMode: "column", wash: null },
+  prompt: { height: 205, botX: 54, botY: null, botDiameter: 46, agentMode: "column", wash: null },
+  settings: { height: 300, botX: 60, botY: 80, botDiameter: 0, agentMode: "none", wash: null },
 };
+
+/// The header + mascot gutter every expanded view shares. Total height is this
+/// plus the layout height.
+export const EXPANDED_HEADER_H = 42;
 
 export interface IslandSize {
   w: number;
@@ -91,6 +101,11 @@ export function botPosition(
       const layout = VIEW_LAYOUTS[view] ?? VIEW_LAYOUTS.overview;
       if (layout.botY != null) {
         return { cx: layout.botX, cy: layout.botY, diameter: layout.botDiameter, opacity: 1 };
+      }
+      // `botDiameter: 0` hides the mascot entirely: the layout reserves no room
+      // for it, so the card gets the full width of the island.
+      if (layout.botDiameter <= 0) {
+        return { cx: -200, cy: -200, diameter: 0, opacity: 0 };
       }
       const headerBottom = 42;
       const cardH = 84;

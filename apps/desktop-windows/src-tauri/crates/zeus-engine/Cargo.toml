@@ -1,0 +1,18 @@
+[package]
+name = "zeus-engine"
+version = "0.1.0"
+description = "Zeus desktop host: runtimes, events, local store, permissions"
+edition = "2021"
+
+# Deliberately free of any Tauri or GUI dependency. The engine owns agent
+# processes and must stay testable without a windowing toolchain; the island is
+# a view over it, never the other way round.
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+sha2 = "0.10"
+tokio = { version = "1", features = ["rt", "sync", "macros", "time", "net", "io-util"] }
+tokio-tungstenite = { version = "0.30", features = ["rustls-tls-native-roots"] }
+futures-util = "0.3"
+ureq = { version = "3.4.2", default-features = false, features = ["json", "rustls", "platform-verifier"] }

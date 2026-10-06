@@ -495,6 +495,9 @@ export class Mochi {
     const cfg = BOT_STATES[this.state];
 
     // Canvas size accommodates the mascot plus halo glow and headroom for particles
+    // A zero-size mascot means "hidden" — nothing to paint. Drawing a radial
+    // gradient at r=0 is what was crashing the canvas.
+    if (diameter <= 0) return;
     const box = Math.ceil(diameter * 1.6);
     const need = Math.ceil(box * this.dpr);
     if (this.canvas.width !== need || this.canvas.height !== need) {

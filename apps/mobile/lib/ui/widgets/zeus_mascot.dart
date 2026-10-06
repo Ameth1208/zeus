@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -24,8 +23,6 @@ class ZeusMascot extends StatefulWidget {
 class _ZeusMascotState extends State<ZeusMascot> with TickerProviderStateMixin {
   late final AnimationController _breathing;
   late final AnimationController _reaction;
-  int _tapCount = 0;
-  Timer? _tapReset;
   Offset _gaze = Offset.zero;
 
   @override
@@ -43,9 +40,6 @@ class _ZeusMascotState extends State<ZeusMascot> with TickerProviderStateMixin {
 
   void _handleTap() {
     if (!widget.interactive) return;
-    _tapCount += 1;
-    _tapReset?.cancel();
-    _tapReset = Timer(const Duration(milliseconds: 900), () => _tapCount = 0);
     _reaction.forward(from: 0);
   }
 
@@ -61,7 +55,6 @@ class _ZeusMascotState extends State<ZeusMascot> with TickerProviderStateMixin {
 
   @override
   void dispose() {
-    _tapReset?.cancel();
     _breathing.dispose();
     _reaction.dispose();
     super.dispose();

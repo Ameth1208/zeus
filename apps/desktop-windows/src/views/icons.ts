@@ -1,36 +1,63 @@
 // SVG icons matching Coucou for Windows / macOS SF Symbols.
+//
+// The runtime glyphs are not duplicated here: they belong to the AgentVisualRegistry
+// in ../zeus/visuals, which owns runtime identity. This module depends on it, never
+// the other way round.
+
+import { RUNTIME_GLYPHS, visualForSession, visualFor } from "../zeus/visuals";
+import { LUCIDE, BRANDS } from "../icons/generated";
+
+/** Vendored lucide glyph, stroked at 24x24. Defined inline so a misspelled name
+ *  is a build error, not a blank button. */
+type RuntimePathKey = keyof typeof RUNTIME_GLYPHS;
+type UiIcon = { inner: string; stroke: boolean } | string;
+const lc = (name: string): UiIcon => LUCIDE[name];
 
 export const ICONS = {
-  house: "M12 3.2 2.8 10.6V21h6.6v-5.4h5.2V21h6.6V10.6L12 3.2z",
-  bubble: "M12 3.6c-5 0-9 3.3-9 7.4 0 2.3 1.3 4.4 3.3 5.7-.2 1.2-.8 2.4-1.7 3.4 1.9-.2 3.6-.9 4.9-1.9 .8.2 1.6.3 2.5.3 5 0 9-3.3 9-7.5s-4-7.4-9-7.4z",
-  plus: "M11 4h2v7h7v2h-7v7h-2v-7H4v-2h7V4z",
-  gear: "M12 8.6a3.4 3.4 0 1 0 0 6.8 3.4 3.4 0 0 0 0-6.8zm0 1.8a1.6 1.6 0 1 1 0 3.2 1.6 1.6 0 0 1 0-3.2zM10.9 2h2.2l.35 2.1c.6.17 1.16.4 1.67.71l1.9-1 1.55 1.55-1 1.9c.3.5.54 1.07.7 1.67l2.13.35v2.2l-2.12.35c-.17.6-.4 1.16-.71 1.67l1 1.9-1.55 1.55-1.9-1c-.5.3-1.07.54-1.67.7L13.1 22h-2.2l-.35-2.12c-.6-.17-1.16-.4-1.67-.71l-1.9 1L5.43 18.6l1-1.9c-.3-.5-.54-1.07-.7-1.67L3.6 14.7v-2.2l2.12-.35c.17-.6.4-1.16.71-1.67l-1-1.9 1.55-1.55 1.9 1c.5-.3 1.07-.54 1.67-.7L10.9 2z",
-  gearFill: "M10.9 2h2.2l.35 2.1c.6.17 1.16.4 1.67.71l1.9-1 1.55 1.55-1 1.9c.3.5.54 1.07.7 1.67l2.13.35v2.2l-2.12.35c-.17.6-.4 1.16-.71 1.67l1 1.9-1.55 1.55-1.9-1c-.5.3-1.07.54-1.67.7L13.1 22h-2.2l-.35-2.12c-.6-.17-1.16-.4-1.67-.71l-1.9 1L5.43 18.6l1-1.9c-.3-.5-.54-1.07-.7-1.67L3.6 14.7v-2.2l2.12-.35c.17-.6.4-1.16.71-1.67l-1-1.9 1.55-1.55 1.9 1c.5-.3 1.07-.54 1.67-.7L10.9 2zM12 8.2a3.8 3.8 0 1 0 0 7.6 3.8 3.8 0 0 0 0-7.6z",
-  speakerOn: "M11 4.5 6.5 8.2H3.4v7.6h3.1L11 19.5v-15zm3.2 3a5.3 5.3 0 0 1 0 9 .9.9 0 0 0 .9 1.55 7.1 7.1 0 0 0 0-12.1.9.9 0 0 0-.9 1.55zm2.6-3.1a8.9 8.9 0 0 1 0 15.2.9.9 0 0 0 .92 1.55 10.7 10.7 0 0 0 0-18.3.9.9 0 0 0-.92 1.55z",
-  speakerOff: "M11 4.5 6.5 8.2H3.4v7.6h3.1L11 19.5v-15zm3.6 4.1 1.27-1.27 2.33 2.33 2.33-2.33 1.27 1.27L19.47 11l2.33 2.33-1.27 1.27-2.33-2.33-2.33 2.33-1.27-1.27L16.93 11 14.6 8.6z",
-  arrowUpRight: "M8.5 7h8.5v8.5h-2V10.4l-7.1 7.1-1.4-1.4 7.1-7.1H8.5V7z",
-  chevronRight: "M9 5.5 15.5 12 9 18.5",
-  chevronLeft: "M15 5.5 8.5 12 15 18.5",
-  check: "M5 12.5 9.5 17 19 7.5",
-  arrowUp: "M12 4.5 5.5 11l1.5 1.5 4-4V19.5h2V8.5l4 4L18.5 11 12 4.5z",
-  bang: "M11 4h2v10h-2V4zm0 12.2h2v2.2h-2v-2.2z",
-  xmark: "M6.4 5 12 10.6 17.6 5 19 6.4 13.4 12 19 17.6 17.6 19 12 13.4 6.4 19 5 17.6 10.6 12 5 6.4 6.4 5z",
-  timer: "M12 4.2a7.8 7.8 0 1 0 0 15.6 7.8 7.8 0 0 0 0-15.6zm0 1.9a5.9 5.9 0 1 1 0 11.8 5.9 5.9 0 0 1 0-11.8zm-.95 2.3v4.2l3.3 2 .95-1.55-2.4-1.45V8.4h-1.85zM9.2 2h5.6v1.7H9.2V2z",
-  ellipsis: "M6 10.4a1.6 1.6 0 1 0 0 3.2 1.6 1.6 0 0 0 0-3.2zm6 0a1.6 1.6 0 1 0 0 3.2 1.6 1.6 0 0 0 0-3.2zm6 0a1.6 1.6 0 1 0 0 3.2 1.6 1.6 0 0 0 0-3.2z",
-  star: "M12 3.2l2.6 5.55 5.9.82-4.3 4.3 1.05 6.13L12 17.1l-5.25 2.9L7.8 13.87 3.5 9.57l5.9-.82L12 3.2z",
-  terminal: "M4 5h16a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1zm3 4 3 3-3 3 1.4 1.4 4.4-4.4L8.4 7.6 7 9zm6 6h4v2h-4v-2z",
-  bolt: "M11 2 4 13h6l-1 9 9-12h-6l2-8z",
-  play: "M8 5v14l11-7z",
-  antigravity: "M12 2.5 3.2 19.5h17.6L12 2.5zm0 4.2 6 11.3H6L12 6.7zm0 4.3a2 2 0 1 0 0 4 2 2 0 0 0 0-4z",
-  claude: "M12 2l2.2 7.8L22 12l-7.8 2.2L12 22l-2.2-7.8L2 12l7.8-2.2L12 2z",
-  codex: "M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm1 14.93V14a2 2 0 0 0-2-2H9v-2h4a4 4 0 0 1 4 4v2.93z",
-  opencode: "M8.5 7.5 4 12l4.5 4.5 1.4-1.4L6.8 12l3.1-3.1L8.5 7.5zm7 0-1.4 1.4 3.1 3.1-3.1 3.1 1.4 1.4 4.5-4.5-4.5-4.5zm-4.7 10.4 3.2-11.8-1.9-.5-3.2 11.8 1.9.5z",
-} as const;
+  house: lc("house"),
+  bubble: lc("bubble"),
+  plus: lc("plus"),
+  gear: lc("gear"),
+  gearFill: lc("gearFill"),
+  speakerOn: lc("speakerOn"),
+  speakerOff: lc("speakerOff"),
+  arrowUpRight: lc("arrowUpRight"),
+  chevronRight: lc("chevronRight"),
+  chevronLeft: lc("chevronLeft"),
+  check: lc("check"),
+  arrowUp: lc("arrowUp"),
+  bang: lc("bang"),
+  xmark: lc("xmark"),
+  timer: lc("timer"),
+  ellipsis: lc("ellipsis"),
+  star: lc("star"),
+  terminal: lc("terminal"),
+  bolt: lc("bolt"),
+  play: lc("play"),
+  antigravity: RUNTIME_GLYPHS.antigravity as string,
+  claude: RUNTIME_GLYPHS.claude as string,
+  codex: RUNTIME_GLYPHS.codex as string,
+  opencode: RUNTIME_GLYPHS.opencode as string,
+} satisfies Record<string, UiIcon | string>;
 
+export { visualForSession, visualFor };
+
+/**
+ * Glyph for a runtime name.
+ *
+ * The registry resolves exact ids and their known aliases; the substring pass is
+ * a fallback for the shapes these CLIs report, e.g. "claude-code" or
+ * "openai/codex". An unrecognised name gets the neutral mark rather than
+ * another runtime's logo.
+ */
 export function getAgentIcon(runtime: string): string {
+  const visual = visualForSession(runtime);
+  if (visual.id !== "unknown") return visual.path;
+
   const r = runtime.toLowerCase();
-  if (r.includes("claude")) return ICONS.claude;
-  if (r.includes("codex") || r.includes("openai")) return ICONS.codex;
-  if (r.includes("open") || r.includes("deepseek")) return ICONS.opencode;
-  return ICONS.antigravity;
+  if (r.includes("claude")) return RUNTIME_GLYPHS.claude;
+  if (r.includes("codex") || r.includes("openai")) return RUNTIME_GLYPHS.codex;
+  if (r.includes("open") || r.includes("deepseek")) return RUNTIME_GLYPHS.opencode;
+  if (r.includes("agy") || r.includes("antigravity")) return RUNTIME_GLYPHS.antigravity;
+  return RUNTIME_GLYPHS.unknown;
 }

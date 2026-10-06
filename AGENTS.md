@@ -1,8 +1,8 @@
 # AGENTS.md
 
-Zeus — an agent control plane. A Go gateway aggregates AI-agent events (Codex,
-Claude Code, Antigravity, generic adapters) and surfaces them in a Flutter mobile
-app and a Tauri desktop island. Derived from `Louis-CFM/coucou` (MIT).
+Zeus — a local-first agent control plane. A desktop host orchestrates AI coding
+CLIs (Codex, Claude Code, Antigravity) and mirrors state through a Go gateway to
+a Flutter mobile app. Derived from `Louis-CFM/coucou` (MIT).
 
 There are **no agent rule files** in this repo (`.cursorrules`, `.cursor/rules/`,
 `.github/copilot-instructions.md` are all absent). This file is the single source.
@@ -10,15 +10,56 @@ There are **no agent rule files** in this repo (`.cursorrules`, `.cursor/rules/`
 ## Layout
 
 ```
-gateway/           Go 1.23 · HTTP server + session store
+gateway/           Go 1.23 · VPS gateway: auth, pairing, sync, remote commands
+apps/desktop-windows/  Tauri 2 host + island UI (the primary app)
+  src-tauri/crates/zeus-engine/   ZeusEngine: runtimes, events, store, approvals
+  src/                            webview: island, views, engine client
 apps/mobile/       Flutter + Riverpod · Android/iOS
-apps/desktop-windows/  Tauri 2 + TypeScript · Windows/Linux island
 apps/desktop-macos/    SwiftUI · macOS island (build needs xcodegen)
-adapters/          Python runtime hooks (one dir per agent runtime)
+adapters/          Python runtime hooks for observed sessions
 shared/ packages/  Cross-cutting assets and contracts
 scripts/           Canonical build/test entry points
 tools/             Asset pipelines (e.g. normalize_zeus_frames.py)
 ```
+
+## Architecture — read this first
+
+Zeus is local-first. The machine running the CLIs owns the sessions; the VPS
+gateway mirrors state so a phone can watch and approve.
+
+**The UI never owns an agent process.** The webview holds no process handle, no
+socket and no store. It calls a Tauri command, `ZeusEngine` decides, data comes
+back. Hiding the island or reloading the page therefore cannot stop anything.
+
+That is why the engine lives in Rust and **not** in `src/`:
+
+```
+src/engine/client.ts        typed invoke/event bridge — the only UI↔host seam
+src-tauri/src/lib.rs        window control, hotkey, bus bridge, commands
+src-tauri/crates/zeus-engine/
+  lib.rs                    ZeusEngine: the single object everything goes through
+  event.rs                  ZeusEvent + the closed EventKind set
+  bus.rs                    one broadcast channel, many readers
+  store.rs                  LocalStore: append NDJSON, then snapshot
+  digest.rs                 SessionDigest (replaces history replay)
+  permission.rs             PermissionManager — the approval authority
+  context.rs                ContextManager: git diff → Serena → ast-grep → rg
+  tokens.rs                 token/cost accounting, estimate always labelled
+  session.rs                SessionManager + RuntimeSupervisor
+  gateway.rs                outbound WSS client, bounded queue
+  ingest.rs                 loopback HTTP for observed hooks (port 8787)
+  registry.rs               RuntimeRegistry
+  runtime/                  mod.rs (trait) · codex · claude · antigravity
+                            observed · stdio
+  tests/parity.rs           Codex/Claude/agy fixtures must normalize alike
+```
+
+The engine crate has **no Tauri dependency**. That is deliberate: the host must be
+testable without a windowing toolchain, and the UI/engine boundary should be
+enforced by the build rather than by convention.
+
+See `docs/ARCHITECTURE.md` for the full picture, including why each runtime
+advertises exactly the capabilities it has.
 
 ## Commands
 
@@ -29,7 +70,16 @@ Run from the repo root unless noted. `./scripts/test.sh` is the gate CI uses.
 ./scripts/test.sh
 ```
 
-**Gateway — single test** (the only layer with real Go coverage):
+**Engine — the runtimes and the approval rules** (run these; they are part of the core gate):
+```bash
+cd apps/desktop-windows/src-tauri
+cargo test -p zeus-engine          # every test here; add `-- --nocapture` to debug
+cargo test -p zeus-engine --lib    # unit tests only, skips the parity fixtures
+cargo test -p zeus-engine --test parity
+cargo check                         # both crates
+```
+
+**Gateway — single test:**
 ```bash
 cd gateway
 go test ./internal -run TestSessionPersistenceAndPermissionLifecycle -v
@@ -122,6 +172,20 @@ npm run tauri build   # release exe + msi + nsis
   invisible because release builds do not forward console output.
 - Animation constants are named and commented with *why*, not *what*.
 
+## Context and token cost
+
+`ContextManager` retrieval order is fixed and is the biggest cost lever:
+`git diff` → Serena → `ast-grep` → `rg` → bounded chunk → whole file.
+
+- Caps are enforced, not suggested: ≤20 search hits, ≤200 lines per read, ≤32 KB
+  of log with the tail kept. Over-budget results carry `truncated: true`.
+- A file whose content hash is unchanged is never sent twice.
+- `repomix` runs only when a repository map is asked for by name.
+- Serena is the **only** MCP server enabled by default, and only for runtimes
+  that speak MCP. Fewer tools beats many tools.
+- Token counts come from the runtime when reported. The estimator only fills gaps
+  and always sets `estimated: true`.
+
 ## Python style (`adapters/`)
 
 - **Runtime hooks must be fail-open.** If the gateway is unreachable, the AI
@@ -150,15 +214,50 @@ and the design only works as a set:
 - Mascot frames live in `assets/zeus/` and are **generated**, not hand-edited.
   Run `python3 tools/normalize_zeus_frames.py` after changing them; raw frames are
   1122×1402 and illegible at island scale.
-- Event → state mapping is duplicated deliberately in Go, Dart and TS. When changing
-  it, change all three: `statusForEvent` in `gateway/internal/store.go`,
-  `stateForSession` in `apps/mobile/lib/ui/island/zeus_bot_state.dart`, and
-  `stateForSession` in `apps/desktop-windows/src/zeus/frames.ts`.
+- Event → state mapping is duplicated deliberately in **three** places. When
+  changing it, change all three together:
+  `status_for` in `crates/zeus-engine/src/store.rs`,
+  `statusForEvent` in `gateway/internal/store.go`, and
+  `uiStateForSession` in `apps/desktop-windows/src/zeus/frames.ts`.
+- The mascot exposes exactly nine UI states: `idle, thinking, working,
+  waitingApproval, waitingInput, success, error, sleeping, disconnected`. There is
+  no runtime-specific state, because every runtime is normalized to events before
+  the UI sees it. `BOT_STATES` in `frames.ts` is the drawable table behind those
+  nine, not a wider API.
+- **Never render a control the runtime has not advertised.** `can(session, "stop")`
+  in `views.ts` is the single gate. A runtime without `interrupt` gets no button,
+  rather than a button that reports "unsupported" when pressed.
+- **MODEL != RUNTIME.** `runtime` is the CLI, `provider` is the model vendor.
+  They are separate fields everywhere and must never be merged.
+
+## Rust style (`src-tauri/`)
+
+- `gofmt` has no Rust equivalent here: `cargo fmt` if the toolchain has it, else
+  keep lines under 100 and match the surrounding file.
+- Errors are values. `DriverError::Unsupported("interrupt")` means "this runtime
+  genuinely cannot do this" and the UI renders no control; `DriverError::Failed`
+  means it tried and did not work. **Never return `Unsupported` for something a
+  user could reasonably expect to work.**
+- Types with mutable state guard it with `Mutex`/`RwMutex` and take the lock in
+  every method. `LocalStore` and `PermissionManager` are the reference.
+- Driver reader threads publish through `Arc<dyn EventSink>`; the `BusSink` in
+  `lib.rs` persists to the store *before* fanning out, so a crash between the two
+  loses nothing.
+- Tests are unit tests next to the code (`#[cfg(test)] mod tests`) plus
+  `tests/parity.rs` for the cross-runtime fixtures. Fixtures under
+  `tests/fixtures/` record their provenance in a `_provenance` field: verbatim
+  captures are kept separate from schema-derived shapes.
+- Every function that touches a process, socket or filesystem needs a test that
+  proves its *failure* mode, not just its success. Several bugs found while
+  building this only showed up there: a `..` in a path defeating a `starts_with`
+  guard, a store that silently dropped its first events because the directory did
+  not exist yet.
 
 ## Before you commit
 
-1. `./scripts/test.sh`
+1. `./scripts/test.sh`  (gateway go test + engine cargo test + py_compile + schema)
 2. `cd apps/mobile && flutter analyze && flutter test`
 3. `cd apps/desktop-windows && npx tsc --noEmit`
+4. `cd apps/desktop-windows/src-tauri && cargo check`
 4. Never commit `.env`, `providers.json`, `target/`, `dist/` (except `dist/gateway/`), or `node_modules/` — all gitignored.
 5. Credentials belong in the OS keyring, never in source or logs.

@@ -88,8 +88,7 @@ class ProvidersSheet extends ConsumerWidget {
                         child: ListView.separated(
                           shrinkWrap: true,
                           itemCount: providers.length,
-                          separatorBuilder: (_, __) =>
-                              const SizedBox(height: 8),
+                          separatorBuilder: (_, _) => const SizedBox(height: 8),
                           itemBuilder: (_, index) =>
                               _ProviderTile(provider: providers[index]),
                         ),
@@ -98,7 +97,7 @@ class ProvidersSheet extends ConsumerWidget {
                   padding: EdgeInsets.symmetric(vertical: 28),
                   child: Center(child: CircularProgressIndicator.adaptive()),
                 ),
-                error: (_, __) => const Padding(
+                error: (_, _) => const Padding(
                   padding: EdgeInsets.symmetric(vertical: 24),
                   child: Center(
                     child: Text(

@@ -7,6 +7,7 @@ import { colorForProject, describeEvent } from "./zeus/frames";
 import { ICONS, getAgentIcon } from "./views/icons";
 import { svg } from "./views/dom";
 import { Ticker } from "./views/ticker";
+import type { PendingRequest, RuntimeEntry } from "./engine/client";
 
 export interface AgentCardInfo {
   id: string;
@@ -36,30 +37,49 @@ export interface EventItem {
 export const ViewData = {
   sessions: [] as Session[],
   focus: null as Session | null,
+  /** Approvals that are still decidable. Expired ones are filtered out by the
+   *  engine, so a button here is always a button that will be honoured. */
+  pending: [] as PendingRequest[],
+  /** What this machine can drive, and what it can only watch. */
+  runtimes: [] as RuntimeEntry[],
   activeView: "overview" as IslandViewName,
   state: "idle",
-  paired: false,
+  /** "offline" means the engine host is unreachable, not that an agent stopped:
+   *  agents live in the host and keep running either way. */
+  hostState: "online" as "online" | "offline",
+  gatewayState: "offline" as "online" | "connecting" | "offline",
   soundOn: true,
   disablePoking: localStorage.getItem("zeus_disable_poking") === "true",
   autoCloseSec: parseInt(localStorage.getItem("zeus_autoclose") || "15", 10),
   gatewayUrl: localStorage.getItem("zeus_gateway_url") || "http://127.0.0.1:8080",
   gatewayToken: localStorage.getItem("zeus_gateway_token") || "local-dev",
+  launchRuntime: "",
+  launchCwd: localStorage.getItem("zeus_launch_cwd") || "",
+  busyAction: "" as "" | "launch" | "send" | "save-gateway",
   error: "",
   events: [] as EventItem[],
   ticker: new Ticker(),
 };
 
+/** True when the focused session advertises a capability. The single gate on
+ *  every control: a runtime without `stop` gets no stop button, rather than a
+ *  button that fails when pressed. */
+export function can(capability: string): boolean {
+  return !!ViewData.focus && ViewData.focus.capabilities.includes(capability);
+}
+
 export function renderHeader(activeView: IslandViewName, soundEnabled: boolean): string {
   return `
     <div id="header">
       <div class="tabs">
-        <button class="tab ${activeView === "overview" || activeView === "empty" ? "on" : ""}" data-nav="overview" title="Agents Overview">
-          ${svg(ICONS.house, 13).outerHTML}
-          <span style="font-size:11px;font-weight:600;margin-left:4px;">Agents</span>
+        <button class="tab icon-only ${activeView === "overview" || activeView === "empty" ? "on" : ""}" data-nav="overview" title="Agents" aria-label="Agents">
+          ${svg(ICONS.house, 15).outerHTML}
         </button>
-        <button class="tab ${activeView === "prompt" ? "on" : ""}" data-nav="prompt" title="Live Activity Stream">
-          ${svg(ICONS.bolt, 12).outerHTML}
-          <span style="font-size:11px;font-weight:600;margin-left:4px;">Activity</span>
+        <button class="tab icon-only ${activeView === "prompt" ? "on" : ""}" data-nav="prompt" title="Activity" aria-label="Activity">
+          ${svg(ICONS.bolt, 14).outerHTML}
+        </button>
+        <button class="tab icon-only ${activeView === "launcher" ? "on" : ""}" data-nav="launcher"  title="Launch an agent" aria-label="Launch an agent">
+          ${svg(ICONS.plus, 14).outerHTML}
         </button>
       </div>
       <div class="header-actions">
@@ -77,10 +97,14 @@ export function renderViewContent(view: IslandViewName): string {
   switch (view) {
     case "approval":
       return renderApprovalView();
+    case "question":
+      return renderQuestionView();
     case "empty":
       return renderEmptyView();
     case "prompt":
       return renderPromptView();
+    case "launcher":
+      return renderLauncherView();
     case "settings":
       return renderSettingsView();
     case "overview":
@@ -94,11 +118,12 @@ function renderOverviewView(): string {
   if (!f) return renderEmptyView();
 
   const color = colorForProject(f.project);
-  const runtimeLabel = f.runtime || "Antigravity";
-  const projectLabel = f.project || "Active Workspace";
+  const runtimeLabel = f.runtime || "agent";
   const model = f.model || "default";
   const isWaiting = f.status === "waiting";
-  const tool = f.capabilities?.find((c) => c.startsWith("tool:"))?.slice(5) || "";
+  const isApproval = f.last_event === "permission.requested";
+  const isInput = f.last_event === "input.requested";
+  const tool = f.last_event === "tool.started" ? "tool" : "";
 
   const others = ViewData.sessions.filter((s) => s.id !== f.id).slice(0, 4);
 
@@ -131,14 +156,20 @@ function renderOverviewView(): string {
 
               <div class="work-actions-row">
                 ${
-                  isWaiting
+                  isApproval
                     ? `
                   <button class="btn primary" data-act="approve" style="background:#3B82F6;padding:4px 12px;font-size:11px;">Allow (Y)</button>
                   <button class="btn secondary" data-act="deny" style="padding:4px 12px;font-size:11px;">Deny (N)</button>
                 `
+                    : isInput && can("send")
+                      ? '<button class="btn primary" data-act="open-question" style="background:#3B82F6;padding:4px 12px;font-size:11px;">Answer</button>'
                     : `
-                  <button class="btn secondary" data-act="stop-agent" style="padding:4px 10px;font-size:10.5px;">Stop Agent</button>
-                  <button class="btn secondary" data-act="sync-sessions" style="padding:4px 10px;font-size:10.5px;margin-left:auto;">Sync</button>
+                  ${can("interrupt")
+                    ? '<button class="btn secondary" data-act="interrupt-agent" style="padding:4px 10px;font-size:10.5px;">Interrupt</button>'
+                    : ""}
+                  ${can("stop")
+                    ? '<button class="btn secondary" data-act="stop-agent" style="padding:4px 10px;font-size:10.5px;">Stop</button>'
+                    : '<span style="opacity:0.7;font-size:10px;">Observed · Zeus does not own this process</span>'}
                 `
                 }
               </div>
@@ -163,9 +194,9 @@ function renderOverviewView(): string {
 function renderPill(s: Session): string {
   const color = colorForProject(s.project);
   const isWaiting = s.status === "waiting";
-  const isFinished = s.status === "finished";
+  const isFinished = s.status === "completed";
   const sid = s.id || "";
-  const runtime = s.runtime || s.project || "Agent";
+  const runtime = s.runtime || "Agent";
 
   return `
     <div class="pill" data-act="focus-session" data-id="${esc(sid)}" style="border-color:${color}33" title="Focus ${esc(runtime)}">
@@ -183,51 +214,121 @@ function renderPill(s: Session): string {
     </div>`;
 }
 
+/** The runtime list comes from the engine, never from a hardcoded array here: a
+ *  runtime installed tomorrow appears without a UI change. */
 function renderDefaultAgentPills(): string {
-  const agents = [
-    { name: "Antigravity", runtime: "Antigravity", color: "#3B82F6" },
-    { name: "Claude Code", runtime: "Claude", color: "#F5A524" },
-    { name: "Codex", runtime: "Codex", color: "#38BDF8" },
-    { name: "OpenCode", runtime: "OpenCode", color: "#818CF8" },
-  ];
-
-  return agents
-    .map(
-      (a) => `
-    <div class="pill" style="border-color:${a.color}28" title="${a.name} agent runtime">
-      <span style="color:${a.color}; display:flex; align-items:center; margin-left:8px; flex:0 0 auto;">
-        ${svg(getAgentIcon(a.runtime), 12).outerHTML}
+  if (ViewData.runtimes.length === 0) return "";
+  return ViewData.runtimes
+    .map((entry) => {
+      const id = entry.info.id;
+      const color = colorForProject(id);
+      const managed = entry.managed;
+      const state = !entry.observed && managed && !managed.installed
+        ? "Not installed"
+        : managed && managed.mode === "managed"
+          ? "Managed · Zeus owns the process"
+          : "Observed · hooks report in";
+      return `
+    <div class="pill" ${managed?.installed ? `data-act="choose-runtime" data-runtime="${esc(id)}"` : ""} style="border-color:${color}28" title="${esc(entry.info.label)} — ${esc(state)}">
+      <span style="color:${color}; display:flex; align-items:center; margin-left:8px; flex:0 0 auto;">
+        ${svg(getAgentIcon(id), 12).outerHTML}
       </span>
-      <span class="lbl">${a.name}</span>
-    </div>`,
-    )
+      <span class="lbl">${esc(entry.info.label)}</span>
+    </div>`;
+    })
     .join("");
 }
 
 function renderApprovalView(): string {
-  const f = ViewData.focus ?? (ViewData.sessions.length > 0 ? ViewData.sessions[0] : null);
-  const color = f ? colorForProject(f.project) : "#F5A524";
-  const agentName = f ? f.runtime || f.project || "Coding Agent" : "Coding Agent";
-  const command = f?.message || f?.last_event || "Executing command in terminal";
+  const request = ViewData.pending[0];
+  const session = request
+    ? ViewData.sessions.find((s) => s.id === request.session_id)
+    : ViewData.focus ?? (ViewData.sessions.length > 0 ? ViewData.sessions[0] : null);
+  if (!request) {
+    return renderEmptyView();
+  }
+  const color = session ? colorForProject(session.project) : "#F5A524";
+  const agentName = session ? session.runtime || "Coding Agent" : "Coding Agent";
+  // The summary is what the runtime asked to do, not the engine's placeholer.
+  const command = request.summary || session?.message || "";
+  const count = ViewData.pending.length;
 
   return `
     <div class="view on">
       <div class="card wash" style="--wash: rgba(245, 165, 36, 0.35);">
-        <div class="stack" style="padding: 4px 16px 4px 116px;">
-          <div class="who-row">
+        <div class="approval-body">
+          <div class="approval-lead">
             <i class="dot" style="width:8px;height:8px;background:${color}"></i>
-            <span class="n">${esc(agentName)}</span>
-            <span>needs permission</span>
+            <span class="approval-agent">${esc(agentName)}</span>
+            <span class="approval-time">${count > 1 ? `${count} requests waiting` : "needs your decision"}</span>
           </div>
-          <div class="code">${esc(command)}</div>
-          <div class="actions">
-            <button class="btn secondary" data-act="deny">
-              <span>Deny</span>
-              <span class="kbd">N</span>
+          <div class="approval-summary" title="${esc(command)}">${esc(command)}</div>
+          <div class="approval-actions">
+            <button class="btn secondary" data-act="deny" title="Deny (N)">
+              <span>Deny</span><span class="kbd">N</span>
             </button>
-            <button class="btn primary" data-act="approve" style="background:#3B82F6;">
-              <span>Allow</span>
-              <span class="kbd">Y</span>
+            <button class="btn primary" data-act="approve" title="Allow (Y)">
+              <span>Allow</span><span class="kbd">Y</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
+
+function renderQuestionView(): string {
+  const request = ViewData.pending[0];
+  const session = request
+    ? ViewData.sessions.find((s) => s.id === request.session_id)
+    : ViewData.focus;
+  const question = request?.summary || session?.message || "Zeus needs an answer";
+  return `
+    <div class="view on">
+      <div class="card wash" style="--wash: rgba(34, 211, 238, 0.32);">
+        <div class="approval-body">
+          <div class="approval-lead">
+            <i class="dot" style="width:8px;height:8px;background:#22D3EE"></i>
+            <span class="n">${esc(session ? session.runtime || "agent" : "agent")}</span>
+            <span class="approval-time">${ViewData.pending.length > 1 ? "" : "needs an answer"}</span>
+          </div>
+          <div class="approval-summary" title="${esc(question)}">${esc(question)}</div>
+          <div class="chat-bar" style="padding: 0;">
+            <input id="question-answer" class="chat-input" type="text" placeholder="Answer the agent…" autocomplete="off" />
+            <button class="send-btn" data-act="send-answer" title="Send answer" ${ViewData.busyAction ? "disabled" : ""}>
+              ${svg(ICONS.arrowUp, 13).outerHTML}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
+
+function renderLauncherView(): string {
+  const installed = ViewData.runtimes.filter((e) => e.managed && e.managed.installed && e.managed.available.includes("launch"));
+  return `
+    <div class="view on">
+      <div class="card">
+        <div class="launcher-body">
+          <div class="launcher-heading">Launch an agent</div>
+          ${
+            installed.length === 0
+              ? `<div class="launcher-empty">No managed runtime with launch support is installed.</div>`
+              : `<div class="launcher-grid">${installed
+                  .map((entry) => {
+                    const color = colorForProject(entry.info.id);
+                    const chosen = ViewData.launchRuntime === entry.info.id;
+                    return `<button class="launcher-card ${chosen ? "chosen" : ""}" data-act="choose-runtime" data-runtime="${esc(entry.info.id)}" title="Launch ${esc(entry.info.label)}">
+                      <span class="runtime-icon" style="color:${color}">${svg(getAgentIcon(entry.info.id), 15).outerHTML}</span>
+                      <span class="runtime-name">${esc(entry.info.label)}</span>
+                    </button>`;
+                  })
+                  .join("")}</div>`
+          }
+          <div class="chat-bar launcher-prompt">
+            <input id="launch-cwd" class="chat-input" type="text" value="${esc(ViewData.launchCwd)}" placeholder="C:\projects\work" style="max-width: 220px;" />
+            <input id="launch-prompt" class="chat-input" type="text" value="" placeholder="Tell the agent what to do…" autocomplete="off" />
+            <button class="send-btn" data-act="launch-session" title="Launch" ${ViewData.busyAction ? "disabled" : ""}>
+              ${svg(ICONS.arrowUp, 13).outerHTML}
             </button>
           </div>
         </div>
@@ -236,45 +337,34 @@ function renderApprovalView(): string {
 }
 
 function renderEmptyView(): string {
+  const cards = ViewData.runtimes
+    .map((entry) => {
+      const managed = entry.managed;
+      const status = !entry.observed && managed && !managed.installed
+        ? "Not installed"
+        : managed && managed.mode === "managed"
+          ? "Managed"
+          : "Hooks";
+      return `<div class="agent-runtime-card" title="${esc(entry.info.label)}">
+        <span class="runtime-icon" style="color:${colorForProject(entry.info.id)};">${svg(getAgentIcon(entry.info.id), 15).outerHTML}</span>
+        <span class="runtime-name">${esc(entry.info.label)}</span>
+        <span class="runtime-status">${esc(status)}</span>
+      </div>`;
+    })
+    .join("");
+
   return `
     <div class="view on">
-      <div class="card" style="height: 100%; border-color: rgba(59, 130, 246, 0.2);">
-        <div class="agent-discovery-container">
-          <div class="discovery-header">
-            <div class="radar-dot"></div>
-            <div class="discovery-title">Zeus Control Plane</div>
-            <div class="discovery-status">${ViewData.paired ? "Gateway Online · Monitoring Agents" : "Connecting Gateway..."}</div>
-          </div>
-          <div class="agent-runtime-grid">
-            <div class="agent-runtime-card" title="Google Antigravity Agent">
-              <span class="runtime-icon" style="color:#3B82F6;">${svg(ICONS.antigravity, 16).outerHTML}</span>
-              <div class="runtime-info">
-                <span class="runtime-name">Antigravity</span>
-                <span class="runtime-status">Ready · Hook Active</span>
-              </div>
-            </div>
-            <div class="agent-runtime-card" title="Anthropic Claude Code">
-              <span class="runtime-icon" style="color:#F5A524;">${svg(ICONS.claude, 16).outerHTML}</span>
-              <div class="runtime-info">
-                <span class="runtime-name">Claude Code</span>
-                <span class="runtime-status">Ready · CLI Hook</span>
-              </div>
-            </div>
-            <div class="agent-runtime-card" title="OpenAI Codex">
-              <span class="runtime-icon" style="color:#38BDF8;">${svg(ICONS.codex, 16).outerHTML}</span>
-              <div class="runtime-info">
-                <span class="runtime-name">Codex</span>
-                <span class="runtime-status">Ready · Agent Hook</span>
-              </div>
-            </div>
-            <div class="agent-runtime-card" title="OpenCode">
-              <span class="runtime-icon" style="color:#818CF8;">${svg(ICONS.opencode, 16).outerHTML}</span>
-              <div class="runtime-info">
-                <span class="runtime-name">OpenCode</span>
-                <span class="runtime-status">Ready · Adapter</span>
-              </div>
-            </div>
-          </div>
+      <div class="card" style="height: 100%; padding: 0;">
+        <div class="empty-hero">
+          <div class="empty-hero-mascot">${svg(getAgentIcon("zeus"), 24).outerHTML}</div>
+          <div class="empty-hero-title">Zeus Agent Control Plane</div>
+          <div class="empty-hero-sub">${
+            ViewData.hostState === "online"
+              ? "Open the launcher to start a managed session, or start Codex, Claude Code or Antigravity yourself and Zeus will watch."
+              : "Engine host unreachable."
+          }</div>
+          <div class="empty-hero-grid">${cards}</div>
         </div>
       </div>
     </div>`;
@@ -317,8 +407,23 @@ function renderPromptView(): string {
             `
             }
           </div>
+          ${renderSessionComposer()}
         </div>
       </div>
+    </div>`;
+}
+
+function renderSessionComposer(): string {
+  const session = ViewData.focus;
+  if (!session?.live || !session.capabilities.includes("send")) {
+    return '<div class="activity-composer-note">Select a live managed session with send support to continue it.</div>';
+  }
+  return `
+    <div class="chat-bar activity-composer">
+      <input id="session-message" class="chat-input" type="text" placeholder="Send an instruction to ${esc(session.runtime)}" />
+      <button class="send-btn" data-act="send-message" title="Send" ${ViewData.busyAction ? "disabled" : ""}>
+        ${svg(ICONS.arrowUp, 13).outerHTML}
+      </button>
     </div>`;
 }
 
@@ -336,55 +441,59 @@ function renderSettingsView(): string {
             <div class="settings-field-row">
               <input id="gateway-url-input" type="text" value="${esc(ViewData.gatewayUrl)}" placeholder="http://127.0.0.1:8080" class="settings-input" style="flex:1;" />
               <input id="gateway-token-input" type="password" value="${esc(ViewData.gatewayToken)}" placeholder="Token (optional)" class="settings-input" style="width:130px;" />
-              <button class="btn ${ViewData.paired ? "secondary" : "primary"}" data-act="connect-gateway">
-                ${ViewData.paired ? "Reconnect" : "Connect"}
-              </button>
+              <button class="btn secondary" data-act="save-gateway" ${ViewData.busyAction ? "disabled" : ""}>Save</button>
               <div class="status-badge">
-                <i class="dot" style="width:7px;height:7px;background:${ViewData.paired ? "#3B82F6" : "#94A3B8"};box-shadow:0 0 8px ${ViewData.paired ? "#3B82F6" : "transparent"}"></i>
-                <span style="font-size:11px;color:${ViewData.paired ? "#60A5FA" : "var(--dim-2)"};">${ViewData.paired ? "Online" : "Offline"}</span>
+                <i class="dot" style="width:7px;height:7px;background:${ViewData.gatewayState === "online" ? "#3B82F6" : "#94A3B8"};box-shadow:0 0 8px ${ViewData.gatewayState === "online" ? "#3B82F6" : "transparent"}"></i>
+                <span style="font-size:11px;color:${ViewData.gatewayState === "online" ? "#60A5FA" : "var(--dim-2)"};">${esc(ViewData.gatewayState[0].toUpperCase() + ViewData.gatewayState.slice(1))}</span>
               </div>
             </div>
+            <div style="margin-top:6px;font-size:10px;opacity:0.7;">
+              Agents run locally whether or not the gateway is reachable.
+            </div>
+            ${ViewData.error ? `<div class="inline-error">${esc(ViewData.error)}</div>` : ""}
           </div>
 
-          <!-- Preferences row -->
-          <div class="settings-field-row" style="justify-content: space-between; gap: 16px;">
-            <div class="settings-toggle-row" style="flex:1;">
-              <div>
-                <div class="settings-toggle-title">Disable Mascot Actions</div>
-                <div class="settings-toggle-sub">Stops clicks on Zeus from poking</div>
-              </div>
-              <button class="switch ${isPokingDisabled ? "on" : ""}" data-act="toggle-poking" title="Toggle mascot poking"></button>
+          <!-- Preferences, one per row: side-by-side at island widths reads as
+               cramped, and toggle titles get truncated. -->
+          <div class="settings-toggle-row">
+            <div>
+              <div class="settings-toggle-title">Disable Mascot Actions</div>
+              <div class="settings-toggle-sub">Stops clicks on Zeus from poking</div>
             </div>
-
-            <div class="settings-toggle-row" style="flex:1;">
-              <div>
-                <div class="settings-toggle-title">Sound Effects</div>
-                <div class="settings-toggle-sub">Audio cues on state change</div>
-              </div>
-              <button class="switch ${isSoundOn ? "on" : ""}" data-act="toggle-sound-switch" title="Toggle sound"></button>
+            <button class="switch ${isPokingDisabled ? "on" : ""}" data-act="toggle-poking" title="Toggle mascot poking"></button>
+          </div>
+          <div class="settings-toggle-row">
+            <div>
+              <div class="settings-toggle-title">Sound Effects</div>
+              <div class="settings-toggle-sub">Audio cues on state change</div>
             </div>
+            <button class="switch ${isSoundOn ? "on" : ""}" data-act="toggle-sound-switch" title="Toggle sound"></button>
           </div>
 
-          <!-- Connected Runtimes info -->
+          <!-- Runtimes, with the capabilities this machine actually has. -->
           <div class="settings-section">
-            <div class="settings-label">Supported Agent Runtimes</div>
+            <div class="settings-label">Agent Runtimes</div>
             <div class="agent-runtime-grid" style="margin-top:6px;">
-              <div class="agent-runtime-card">
-                <span class="runtime-icon" style="color:#3B82F6;">${svg(ICONS.antigravity, 14).outerHTML}</span>
-                <span class="runtime-name">Antigravity</span>
-              </div>
-              <div class="agent-runtime-card">
-                <span class="runtime-icon" style="color:#F5A524;">${svg(ICONS.claude, 14).outerHTML}</span>
-                <span class="runtime-name">Claude Code</span>
-              </div>
-              <div class="agent-runtime-card">
-                <span class="runtime-icon" style="color:#38BDF8;">${svg(ICONS.codex, 14).outerHTML}</span>
-                <span class="runtime-name">Codex</span>
-              </div>
-              <div class="agent-runtime-card">
-                <span class="runtime-icon" style="color:#818CF8;">${svg(ICONS.opencode, 14).outerHTML}</span>
-                <span class="runtime-name">OpenCode</span>
-              </div>
+              ${
+                ViewData.runtimes.length === 0
+                  ? '<div class="agent-runtime-card"><span class="runtime-status">No runtimes detected</span></div>'
+                  : ViewData.runtimes
+                      .map((entry) => {
+                        const managed = entry.managed;
+                        const caps = managed
+                          ? managed.available
+                          : entry.observed
+                            ? ["observe", "toolEvents"]
+                            : [];
+                        const title = `${entry.info.label}: ${caps.join(", ") || "none"}`;
+                        return `
+              <div class="agent-runtime-card" title="${esc(title)}">
+                <span class="runtime-icon" style="color:${colorForProject(entry.info.id)};">${svg(getAgentIcon(entry.info.id), 14).outerHTML}</span>
+                <span class="runtime-name">${esc(entry.info.label)}</span>
+              </div>`;
+                      })
+                      .join("")
+              }
             </div>
           </div>
         </div>
@@ -403,8 +512,10 @@ export function renderCompactContent(): string {
   }
 
   const isWaiting = f.status === "waiting";
+  const isApproval = f.last_event === "permission.requested";
+  const isInput = f.last_event === "input.requested";
   const icon = getAgentIcon(f.runtime);
-  const text = f.message || f.last_event || "Active";
+  const text = f.message || f.status || "Active";
 
   if (isWaiting) {
     return `
@@ -413,10 +524,12 @@ export function renderCompactContent(): string {
           ${svg(icon, 13).outerHTML}
         </span>
         <span class="compact-text" title="${esc(f.message || '')}"><b>${esc(f.runtime)}</b>: ${esc(text)}</span>
-        <div class="compact-actions">
+        ${isApproval ? `<div class="compact-actions">
           <button class="compact-btn approve" data-act="approve" title="Allow action">Allow</button>
           <button class="compact-btn deny" data-act="deny" title="Deny action">Deny</button>
-        </div>
+        </div>` : isInput ? `<div class="compact-actions">
+          <button class="compact-btn approve" data-act="open-question" title="Answer agent">Answer</button>
+        </div>` : ""}
       </div>
     `;
   }

@@ -2,33 +2,64 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://zeus.local/protocol/zeus-event.schema.json",
   "title": "Zeus Agent Event",
+  "description": "One normalized event. Every runtime is reduced to this shape before it reaches the gateway, the mobile app or the island. `kind` is canonical; `type` is the legacy alias still emitted by the Python hooks in adapters/, and the gateway folds one into the other.",
   "type": "object",
-  "required": ["session_id", "agent_id", "runtime", "type"],
+  "required": ["session_id", "agent_id", "runtime"],
   "properties": {
-    "id": {"type": "string"},
+    "id": {"type": "string", "description": "Legacy event id."},
+    "event_id": {"type": "string", "description": "Event id. Unique per session; a repeat is a replay and is ignored."},
+    "seq": {"type": "integer", "minimum": 0, "description": "Monotonic per session. The gateway drops an event whose seq is not greater than the last one it saw, which makes duplicate and out-of-order delivery harmless."},
     "timestamp": {"type": "string", "format": "date-time"},
+    "time": {"type": "integer", "description": "Unix milliseconds. Canonical for events from the desktop engine."},
     "session_id": {"type": "string", "minLength": 1},
     "agent_id": {"type": "string", "minLength": 1},
-    "runtime": {"type": "string", "minLength": 1},
-    "provider": {"type": "string"},
+    "runtime": {"type": "string", "minLength": 1, "description": "The CLI. Never the model vendor."},
+    "provider": {"type": "string", "description": "Vendor behind the model. Kept separate from runtime."},
     "model": {"type": "string"},
     "project": {"type": "string"},
     "machine_id": {"type": "string"},
     "machine_name": {"type": "string"},
-    "type": {
+    "kind": {
       "type": "string",
       "enum": [
-        "session.started", "thinking", "tool.started", "tool.completed", "tool.failed",
-        "file.read", "file.changed", "command.started", "command.completed",
-        "permission.requested", "permission.resolved", "message", "heartbeat",
-        "agent.interrupted", "session.completed", "session.failed", "session.stopped"
+        "session.started",
+        "session.completed",
+        "session.failed",
+        "agent.thinking",
+        "agent.message",
+        "tool.started",
+        "tool.completed",
+        "tool.failed",
+        "permission.requested",
+        "permission.resolved",
+        "input.requested"
       ]
     },
+    "type": {
+      "type": "string",
+      "description": "Legacy alias for kind. Accepted for backwards compatibility with adapters that predate the closed set.",
+      "enum": [
+        "session.started", "session.completed", "session.failed", "session.stopped",
+        "agent.thinking", "agent.message", "thinking", "message",
+        "tool.started", "tool.completed", "tool.failed",
+        "file.read", "file.changed",
+        "command.started", "command.completed",
+        "permission.requested", "permission.resolved", "input.requested",
+        "agent.interrupted", "heartbeat"
+      ]
+    },
+    "external_session_id": {"type": "string", "description": "The runtime's own conversation id, needed to resume."},
     "message": {"type": "string"},
     "tool": {"type": "string"},
     "path": {"type": "string"},
     "command": {"type": "string"},
-    "metadata": {"type": "object", "additionalProperties": true}
+    "metadata": {"type": "object", "additionalProperties": true, "description": "Runtime-specific detail, including `request_id` on an approval and `usage` on a terminal event."}
   },
+  "allOf": [
+    {
+      "if": {"not": {"required": ["kind"]}},
+      "then": {"required": ["type"]}
+    }
+  ],
   "additionalProperties": false
 }

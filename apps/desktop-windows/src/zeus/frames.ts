@@ -1,6 +1,26 @@
 // Visual states of the Zeus mascot. Same shape as the reference app's state
 // table. Each row is a frame plus the behaviour and colour that go with it.
 
+/**
+ * The only states the UI is allowed to express.
+ *
+ * Deliberately nine, and deliberately runtime-agnostic: every runtime is reduced
+ * to normalized events before it reaches here, so there is nothing runtime-shaped
+ * to represent. The table below is how those nine are drawn, not a wider API.
+ */
+export type ZeusUiState =
+  | "idle"
+  | "thinking"
+  | "working"
+  | "waitingApproval"
+  | "waitingInput"
+  | "success"
+  | "error"
+  | "sleeping"
+  | "disconnected";
+
+/** What the canvas actually draws. A superset, because several frames are
+ *  shared between states and some are interaction flourishes (poking). */
 export type ZeusBotState =
   | "idle"
   | "working"
@@ -179,45 +199,96 @@ export const BOT_STATES: Record<ZeusBotState, ZeusStateCfg> = {
   },
 };
 
+/** A session as the engine reports it. Field names match the Rust struct, so
+ *  there is no translation layer to keep in sync. */
 export interface Session {
   id: string;
-  agent_id: string;
   runtime: string;
-  provider?: string;
-  model?: string;
-  project?: string;
-  machine_name?: string;
+  mode: "managed" | "observed";
+  project: string;
+  model: string;
   status: string;
-  last_event: string;
+  live: boolean;
+  capabilities: string[];
+  external_session_id: string | null;
+  usage: {
+    input: number;
+    output: number;
+    cached: number;
+    thinking: number;
+    estimated: boolean;
+  };
+  digest_chars: number;
+  last_seq: number;
+  /** Set by the client from the latest event, since the engine's session view is
+   *  a snapshot and the last event is only known on the event stream. */
+  last_event?: string;
   message?: string;
-  capabilities?: string[];
-  pending_request_id?: string;
 }
 
-/** Maps a gateway session status + event onto a visual state.
+/** The nine UI states, in island priority order: approval beats error beats
+ *  input beats working beats completed beats idle. A single session can be
+ *  several of these at once; this order is the tie-break. */
+export const UI_PRIORITY: readonly ZeusUiState[] = [
+  "waitingApproval",
+  "error",
+  "waitingInput",
+  "working",
+  "thinking",
+  "success",
+  "disconnected",
+  "sleeping",
+  "idle",
+];
+
+/** The drawable state behind a UI state. */
+export function frameFor(state: ZeusUiState): ZeusBotState {
+  switch (state) {
+    case "waitingApproval":
+      return "approval";
+    case "waitingInput":
+      return "question";
+    case "success":
+      return "finished";
+    case "error":
+      return "error";
+    case "thinking":
+      return "thinking";
+    case "working":
+      return "working";
+    case "sleeping":
+      return "sleeping";
+    case "disconnected":
+      return "interrupted";
+    case "idle":
+      return "idle";
+  }
+}
+
+/** Maps a session onto one of the nine UI states.
  *
- *  Mirrors `statusForEvent` in gateway/internal/store.go so the mascot agrees
- *  with the status the gateway already computed, then refines it when the
- *  event carries more specific information. */
-export function stateForSession(session: Session): ZeusBotState {
+ *  Mirrors `status_for` in the engine's `store.rs` and `statusForEvent` in
+ *  gateway/internal/store.go. All three tables must change together.
+ *
+ *  Note the approvals case: `waiting` alone is not enough, because the last
+ *  event distinguishes "needs your permission" from "needs an answer", and
+ *  those deserve different faces. */
+export function uiStateForSession(session: Session): ZeusUiState {
+  if (session.status === "disconnected") return "disconnected";
   switch (session.status) {
     case "waiting":
-      return session.last_event === "permission.requested" ? "approval" : "question";
+      return session.last_event === "input.requested" ? "waitingInput" : "waitingApproval";
     case "completed":
-      return "finished";
+      return "success";
     case "failed":
       return "error";
-    case "interrupted":
-      return "interrupted";
     case "stopped":
       return "idle";
     case "working":
       switch (session.last_event) {
-        case "thinking":
-        case "message":
+        case "agent.thinking":
+        case "agent.message":
           return "thinking";
-        case "file.read":
-          return "searching";
         case "tool.failed":
           return "error";
         default:
@@ -233,6 +304,7 @@ export function focusSession(sessions: Session[]): Session | null {
   return (
     sessions.find((s) => s.status === "waiting") ??
     sessions.find((s) => s.status === "working") ??
+    sessions.find((s) => s.status === "failed") ??
     sessions[0] ??
     null
   );
@@ -240,20 +312,34 @@ export function focusSession(sessions: Session[]): Session | null {
 
 /** Short line for the ticker, built from the fields the event carries. */
 export function describeEvent(session: Session): string {
-  const tool = session.capabilities?.find((c) => c.startsWith("tool:"))?.slice(5);
   switch (session.last_event) {
     case "session.started":
       return "Session started";
+    case "agent.thinking":
+      return session.model ? `Thinking · ${session.model}` : "Thinking";
+    case "agent.message":
+      return session.message ?? "Agent replied";
+    case "tool.started":
+      return "Using a tool…";
+    case "tool.completed":
+      return "Tool finished. Continuing…";
+    case "tool.failed":
+      return "A tool failed. Continuing…";
+    case "permission.requested":
+      return "An action is waiting for your approval.";
+    case "input.requested":
+      return "An action needs an answer.";
+    case "permission.resolved":
+      return "Approval resolved";
+    case "session.completed":
+      return "Task completed.";
+    case "session.failed":
+      return session.message ?? "The task failed.";
+    // Legacy adapter names, still present in sessions restored from an old log.
     case "thinking":
       return session.model ? `Thinking · ${session.model}` : "Thinking";
     case "message":
       return session.message ?? "Agent replied";
-    case "tool.started":
-      return tool ? `Using ${tool}…` : "Using a tool…";
-    case "tool.completed":
-      return tool ? `${tool} finished` : "Tool finished. Continuing…";
-    case "tool.failed":
-      return tool ? `${tool} failed` : "A tool failed. Continuing…";
     case "file.read":
       return "Reading project files…";
     case "file.changed":
@@ -262,23 +348,23 @@ export function describeEvent(session: Session): string {
       return "Running a command…";
     case "command.completed":
       return "Command finished";
-    case "permission.requested":
-      return "An action is waiting for your approval.";
-    case "permission.resolved":
-      return "Approval resolved";
-    case "session.completed":
-      return "Task completed.";
-    case "session.failed":
-      return session.message ?? "The task failed.";
     case "session.stopped":
       return "Task stopped.";
     case "agent.interrupted":
       return "Interrupted.";
-    case "heartbeat":
-      return "Connected to Zeus Gateway.";
     default:
       return session.message ?? "Working…";
   }
+}
+
+/** Aggregate over every session. The island shows one mascot, so this picks the
+ *  state that most deserves attention rather than the most recent. */
+export function uiStateForSessions(sessions: Session[]): ZeusUiState {
+  const states = sessions.map(uiStateForSession);
+  for (const candidate of UI_PRIORITY) {
+    if (states.includes(candidate)) return candidate;
+  }
+  return "idle";
 }
 
 /** Stable per-project colour so a session keeps its identity across events. */
