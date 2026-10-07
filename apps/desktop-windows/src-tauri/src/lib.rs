@@ -456,53 +456,77 @@ fn media_control(command: String) -> Result<(), String> {
 /// capability, not engine domain, and a media hiccup must never stall agent
 /// traffic.
 fn spawn_media_relay(engine: Arc<engine::ZeusEngine>) {
-    std::thread::spawn(move || loop {
-        let Some(endpoint) = engine.gateway.endpoint() else {
-            std::thread::sleep(Duration::from_secs(5));
-            continue;
-        };
-        let base = endpoint.url.trim_end_matches('/').to_string();
-        let auth = format!("Bearer {}", endpoint.token);
-        let machine = engine.workstation_id().to_string();
+    std::thread::spawn(move || {
+        // Reused across ticks for the same reason as the engine relay: a fresh
+        // TLS agent every 3 seconds is a slow handle leak.
         let agent = ureq::Agent::config_builder()
             .timeout_global(Some(Duration::from_secs(5)))
             .build()
             .new_agent();
+        let mut last_signature = String::new();
+        let mut last_report = std::time::Instant::now()
+            .checked_sub(Duration::from_secs(60))
+            .unwrap_or_else(std::time::Instant::now);
+        loop {
+            let Some(endpoint) = engine.gateway.endpoint() else {
+                std::thread::sleep(Duration::from_secs(5));
+                continue;
+            };
+            let base = endpoint.url.trim_end_matches('/').to_string();
+            let auth = format!("Bearer {}", endpoint.token);
+            let machine = engine.workstation_id().to_string();
 
-        // Report state. GSMTC failure means "no session", not an error worth
-        // backing off for.
-        if let Ok(now) = media::now_playing() {
-            let _ = agent
-                .post(&format!("{base}/v1/media/state"))
+            // Report state only when it changed; a re-report every 30s keeps
+            // the gateway from thinking the player vanished.
+            if let Ok(now) = media::now_playing() {
+                let signature = format!(
+                    "{}|{}|{}|{}",
+                    now.title,
+                    now.artist,
+                    now.playing,
+                    (now.position_secs / 10.0) as u64 // seek or >10s drift
+                );
+                if signature != last_signature || last_report.elapsed() > Duration::from_secs(30) {
+                    let _ = agent
+                        .post(&format!("{base}/v1/media/state"))
+                        .header("Authorization", &auth)
+                        .send_json(serde_json::json!({
+                            "machine_id": machine,
+                            "title": now.title,
+                            "artist": now.artist,
+                            "album": now.album,
+                            "playing": now.playing,
+                            "position_secs": now.position_secs,
+                            "duration_secs": now.duration_secs,
+                            "thumbnail": now.thumbnail,
+                        }));
+                    last_signature = signature;
+                    last_report = std::time::Instant::now();
+                }
+            }
+
+            // Drain and apply remote commands.
+            if let Ok(mut response) = agent
+                .get(&format!("{base}/v1/media/commands?machine_id={machine}"))
                 .header("Authorization", &auth)
-                .send_json(serde_json::json!({
-                    "machine_id": machine,
-                    "title": now.title,
-                    "artist": now.artist,
-                    "playing": now.playing,
-                }));
-        }
-
-        // Drain and apply remote commands.
-        if let Ok(mut response) = agent
-            .get(&format!("{base}/v1/media/commands?machine_id={machine}"))
-            .header("Authorization", &auth)
-            .call()
-        {
-            if let Ok(body) = response.body_mut().read_json::<serde_json::Value>() {
-                if let Some(commands) = body["commands"].as_array() {
-                    for raw in commands {
-                        if let Some(command) = raw.as_str().and_then(media::MediaCommand::parse) {
-                            if let Err(err) = media::control(command) {
-                                log_line(&format!("media command failed: {err}"));
+                .call()
+            {
+                if let Ok(body) = response.body_mut().read_json::<serde_json::Value>() {
+                    if let Some(commands) = body["commands"].as_array() {
+                        for raw in commands {
+                            if let Some(command) = raw.as_str().and_then(media::MediaCommand::parse)
+                            {
+                                if let Err(err) = media::control(command) {
+                                    log_line(&format!("media command failed: {err}"));
+                                }
                             }
                         }
                     }
                 }
             }
-        }
 
-        std::thread::sleep(Duration::from_secs(3));
+            std::thread::sleep(Duration::from_secs(3));
+        }
     });
 }
 
@@ -726,6 +750,13 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(hotkey_plugin())
         .manage(island_state.clone());
+
+    // A panic in a background thread previously vanished; the release build
+    // has no console. Write it where a user can send it back.
+    std::panic::set_hook(Box::new(|info| {
+        let backtrace = std::backtrace::Backtrace::force_capture();
+        log_line(&format!("PANIC: {info}\n{backtrace}"));
+    }));
 
     let app = match builder
         .invoke_handler(tauri::generate_handler![

@@ -286,8 +286,10 @@ export class Island {
       this.deps.compactContent.style.pointerEvents = isExpanded ? "none" : "auto";
     }
 
-    // Position and draw mascot
+    // Position and draw mascot. Hidden mode shows nothing at all — not even a
+    // sliver of the frame — because the island visually owns the whole strip.
     const botCanvas = this.deps.botCanvas;
+    botCanvas.style.opacity = this.fsm.mode === "hidden" ? "0" : "1";
     this.engine.botCx = this.botCx.value;
     this.engine.botCy = this.botCy.value;
     this.engine.draw(this.botSize.value);

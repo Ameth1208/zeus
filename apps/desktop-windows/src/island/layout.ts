@@ -55,7 +55,7 @@ export const VIEW_LAYOUTS: Record<IslandViewName, ViewLayout> = {
   finished: { height: 168, botX: 62, botY: null, botDiameter: 58, agentMode: "column", wash: "rgba(34,197,94,0.4)" },
   launcher: { height: 272, botX: 54, botY: 152, botDiameter: 46, agentMode: "column", wash: null },
   prompt: { height: 205, botX: 54, botY: null, botDiameter: 46, agentMode: "column", wash: null },
-  media: { height: 148, botX: 62, botY: null, botDiameter: 52, agentMode: "none", wash: null },
+  media: { height: 168, botX: 62, botY: null, botDiameter: 52, agentMode: "none", wash: null },
   settings: { height: 300, botX: 60, botY: 80, botDiameter: 0, agentMode: "none", wash: null },
 };
 

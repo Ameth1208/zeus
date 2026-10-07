@@ -20,19 +20,24 @@ class MediaCard extends ConsumerWidget {
     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
     child: Row(
       children: [
-        Container(
-          width: 40,
-          height: 40,
-          decoration: BoxDecoration(
-            color: const Color(0xFF4CC2FF).withValues(alpha: .12),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: const ZeusIcon(
-            'music.note',
-            fallback: CupertinoIcons.music_note,
-            size: 18,
-            color: Color(0xFF4CC2FF),
-          ),
+        Builder(
+          builder: (_) {
+            final cover = player.thumbnailBytes;
+            if (cover != null) {
+              return ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: Image.memory(
+                  cover,
+                  width: 40,
+                  height: 40,
+                  fit: BoxFit.cover,
+                  gaplessPlayback: true,
+                  errorBuilder: (_, _, _) => const _CoverFallback(),
+                ),
+              );
+            }
+            return const _CoverFallback();
+          },
         ),
         const SizedBox(width: 12),
         Expanded(
@@ -48,13 +53,25 @@ class MediaCard extends ConsumerWidget {
                   fontSize: 13.5,
                 ),
               ),
-              if (player.artist.isNotEmpty)
+              if (player.subtitle.isNotEmpty)
                 Text(
-                  player.artist,
+                  player.subtitle,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(color: Colors.white54, fontSize: 11.5),
                 ),
+              if (player.durationSecs > 0) ...[
+                const SizedBox(height: 6),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(2),
+                  child: LinearProgressIndicator(
+                    value: player.progress,
+                    minHeight: 3,
+                    backgroundColor: Colors.white12,
+                    valueColor: const AlwaysStoppedAnimation(Colors.white70),
+                  ),
+                ),
+              ],
             ],
           ),
         ),
@@ -76,6 +93,26 @@ class MediaCard extends ConsumerWidget {
           onPressed: () => sendMediaCommand(ref, player, 'next'),
         ),
       ],
+    ),
+  );
+}
+
+class _CoverFallback extends StatelessWidget {
+  const _CoverFallback();
+
+  @override
+  Widget build(BuildContext context) => Container(
+    width: 40,
+    height: 40,
+    decoration: BoxDecoration(
+      color: const Color(0xFF4CC2FF).withValues(alpha: .12),
+      borderRadius: BorderRadius.circular(12),
+    ),
+    child: const ZeusIcon(
+      'music.note',
+      fallback: CupertinoIcons.music_note,
+      size: 18,
+      color: Color(0xFF4CC2FF),
     ),
   );
 }

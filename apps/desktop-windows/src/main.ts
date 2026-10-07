@@ -37,7 +37,6 @@ root.innerHTML = `
       <div id="compact-content"></div>
       <div id="content"></div>
     </div>
-    <div id="bot-glow"></div>
     <canvas id="bot-canvas"></canvas>
     <div id="countdown"></div>
   </div>`;

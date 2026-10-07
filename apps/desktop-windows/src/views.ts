@@ -57,7 +57,16 @@ export const ViewData = {
   gatewayToken: localStorage.getItem("zeus_gateway_token") || "local-dev",
   launchRuntime: "",
   launchCwd: localStorage.getItem("zeus_launch_cwd") || "",
-  media: { available: false, title: "", artist: "", playing: false } as NowPlaying,
+  media: {
+    available: false,
+    title: "",
+    artist: "",
+    album: "",
+    playing: false,
+    position_secs: 0,
+    duration_secs: 0,
+    thumbnail: "",
+  } as NowPlaying,
   busyAction: "" as "" | "launch" | "send" | "save-gateway",
   error: "",
   events: [] as EventItem[],
@@ -137,8 +146,6 @@ function renderOverviewView(): string {
   const isInput = f.last_event === "input.requested";
   const tool = f.last_event === "tool.started" ? "tool" : "";
 
-  const others = ViewData.sessions.filter((s) => s.id !== f.id).slice(0, 4);
-
   return `
     <div class="view overview on">
       <div class="left">
@@ -162,6 +169,7 @@ function renderOverviewView(): string {
               <div class="work-detail-box">
                 ${tool ? `<div class="work-tool-line"><span>tool:</span> ${esc(tool)}</div>` : ""}
                 <div class="work-msg-line">${esc(f.message || describeEvent(f))}</div>
+                ${usageLine(f)}
                 <!-- Ticker mounted here -->
                 <div id="ticker-mount" style="margin-top:auto;"></div>
               </div>
@@ -191,64 +199,82 @@ function renderOverviewView(): string {
       </div>
       <div class="right">
         <div class="card">
-          <div class="pills">
-            ${
-              others.length > 0
-                ? others.map((s) => renderPill(s)).join("")
-                : renderDefaultAgentPills()
-            }
+          <div class="card-body" style="display:flex;flex-direction:column;gap:8px;overflow:hidden;">
+            <div class="home-stats">${statsStrip()}</div>
+            <div style="display:flex;flex-direction:column;gap:2px;min-height:0;overflow-y:auto;">
+              ${ViewData.sessions.map((s) => renderSessionRow(s, f.id)).join("")}
+            </div>
           </div>
         </div>
       </div>
     </div>`;
 }
 
-function renderPill(s: Session): string {
-  const color = colorForProject(s.project);
-  const isWaiting = s.status === "waiting";
-  const isFinished = s.status === "completed";
-  const sid = s.id || "";
-  const runtime = s.runtime || "Agent";
+/** Counts and totals for the home strip. Answers "what are my agents doing"
+ *  in one glance without reading a single card. */
+function statsStrip(): string {
+  const sessions = ViewData.sessions;
+  const working = sessions.filter((s) => s.status === "working").length;
+  const waiting = sessions.filter((s) => s.status === "waiting").length;
+  const done = sessions.filter((s) => s.status === "completed").length;
+  let tokens = 0;
+  for (const s of sessions) tokens += (s.usage?.input ?? 0) + (s.usage?.output ?? 0);
+  const parts = [
+    `<span class="home-stat"><i class="dot" style="width:6px;height:6px;background:#3B82F6"></i><b>${working}</b>&nbsp;working</span>`,
+    waiting > 0
+      ? `<span class="home-stat"><i class="dot" style="width:6px;height:6px;background:#F5A524"></i><b>${waiting}</b>&nbsp;waiting</span>`
+      : "",
+    done > 0
+      ? `<span class="home-stat"><i class="dot" style="width:6px;height:6px;background:#22C55E"></i><b>${done}</b>&nbsp;done</span>`
+      : "",
+    tokens > 0 ? `<span class="home-stat"><b>${fmtTokens(tokens)}</b>&nbsp;tokens</span>` : "",
+  ];
+  return parts.filter(Boolean).join("");
+}
 
+const STATUS_COLORS: Record<string, string> = {
+  working: "#3B82F6",
+  waiting: "#F5A524",
+  completed: "#22C55E",
+  failed: "#F4505E",
+  stopped: "#6b7079",
+};
+
+function renderSessionRow(s: Session, focusedId: string): string {
+  const color = STATUS_COLORS[s.status] ?? "#6b7079";
+  const tokens = s.usage ? s.usage.input + s.usage.output + s.usage.thinking : 0;
+  const meta = [
+    s.status,
+    s.model || "",
+    tokens > 0 ? fmtTokens(tokens) : "",
+  ].filter(Boolean).join(" · ");
   return `
-    <div class="pill" data-act="focus-session" data-id="${esc(sid)}" style="border-color:${color}33" title="Focus ${esc(runtime)}">
-      <span style="color:${color}; display:flex; align-items:center; margin-left:8px; flex:0 0 auto;">
-        ${svg(getAgentIcon(runtime), 12).outerHTML}
-      </span>
-      <span class="lbl">${esc(runtime)}</span>
-      ${
-        isWaiting
-          ? `<div class="pill-badge"><i style="background:#F5A524">${svg(ICONS.bang, 6).outerHTML}</i></div>`
-          : isFinished
-          ? `<div class="pill-badge"><i style="background:#38BDF8">${svg(ICONS.check, 6).outerHTML}</i></div>`
-          : ""
-      }
+    <div class="session-row" data-act="focus-session" data-id="${esc(s.id)}" title="${esc(s.project || s.runtime)}"
+      style="${s.id === focusedId ? "background:rgba(255,255,255,0.06);" : ""}">
+      <span class="session-row-dot ${s.status === "working" ? "working" : ""}" style="background:${color}"></span>
+      <span style="display:flex;align-items:center;flex:0 0 auto;">${svg(getAgentIcon(s.runtime || "agent"), 13).outerHTML}</span>
+      <span class="session-row-name">${esc(s.project || s.runtime || "session")}</span>
+      <span class="session-row-meta">${esc(meta)}</span>
     </div>`;
 }
 
-/** The runtime list comes from the engine, never from a hardcoded array here: a
- *  runtime installed tomorrow appears without a UI change. */
-function renderDefaultAgentPills(): string {
-  if (ViewData.runtimes.length === 0) return "";
-  return ViewData.runtimes
-    .map((entry) => {
-      const id = entry.info.id;
-      const color = colorForProject(id);
-      const managed = entry.managed;
-      const state = !entry.observed && managed && !managed.installed
-        ? "Not installed"
-        : managed && managed.mode === "managed"
-          ? "Managed · Zeus owns the process"
-          : "Observed · hooks report in";
-      return `
-    <div class="pill" ${managed?.installed ? `data-act="choose-runtime" data-runtime="${esc(id)}"` : ""} style="border-color:${color}28" title="${esc(entry.info.label)} — ${esc(state)}">
-      <span style="color:${color}; display:flex; align-items:center; margin-left:8px; flex:0 0 auto;">
-        ${svg(getAgentIcon(id), 12).outerHTML}
-      </span>
-      <span class="lbl">${esc(entry.info.label)}</span>
-    </div>`;
-    })
-    .join("");
+/** Compact token counter, e.g. "12.4k in · 3.1k out". Empty when the runtime
+ *  has not reported usage yet; an estimate must always be labelled. */
+export function fmtTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return String(n);
+}
+
+function usageLine(s: Session): string {
+  const u = s.usage;
+  if (!u || u.input + u.output + u.thinking === 0) return "";
+  const parts = [
+    `${fmtTokens(u.input)} in`,
+    `${fmtTokens(u.output)} out`,
+    u.cached > 0 ? `${fmtTokens(u.cached)} cached` : "",
+  ].filter(Boolean);
+  return `<div class="work-usage-line">${parts.join(" · ")}${u.estimated ? " (estimated)" : ""}</div>`;
 }
 
 function renderApprovalView(): string {
@@ -387,33 +413,33 @@ function renderTerminalView(success: boolean): string {
 }
 
 function renderEmptyView(): string {
-  const cards = ViewData.runtimes
-    .map((entry) => {
-      const managed = entry.managed;
-      const status = !entry.observed && managed && !managed.installed
-        ? "Not installed"
-        : managed && managed.mode === "managed"
-          ? "Managed"
-          : "Hooks";
-      return `<div class="agent-runtime-card" title="${esc(entry.info.label)}">
-        <span class="runtime-icon" style="color:${colorForProject(entry.info.id)};">${svg(getAgentIcon(entry.info.id), 15).outerHTML}</span>
-        <span class="runtime-name">${esc(entry.info.label)}</span>
-        <span class="runtime-status">${esc(status)}</span>
-      </div>`;
-    })
-    .join("");
+  const cards =
+    ViewData.runtimes.length > 0
+      ? ViewData.runtimes
+          .map((entry) => {
+            const id = entry.info.id;
+            const color = colorForProject(id);
+            const installed = !!entry.managed?.installed;
+            return `<button class="empty-agent" ${installed ? `data-act="choose-runtime" data-runtime="${esc(id)}"` : "disabled"}
+              style="${installed ? "" : "opacity:0.45;cursor:default;"}" title="${esc(entry.info.label)}${installed ? "" : " — not installed"}">
+              <span style="color:${color}; display:flex;">${svg(getAgentIcon(id), 20).outerHTML}</span>
+              <span>${esc(entry.info.label)}</span>
+            </button>`;
+          })
+          .join("")
+      : `<div class="empty-hero-line" style="color:var(--dim-3);grid-column:span 4;">No runtimes detected.</div>`;
 
   return `
     <div class="view on">
       <div class="card" style="height: 100%; padding: 0;">
         <div class="empty-hero">
-          <div class="empty-hero-title">Zeus Agent Control Plane</div>
+          <div class="empty-hero-title">Zeus</div>
           <div class="empty-hero-sub">${
             ViewData.hostState === "online"
-              ? "Open the launcher to start a managed session, or start Codex, Claude Code or Antigravity yourself and Zeus will watch."
+              ? "Launch an agent, or start one yourself — Zeus will watch."
               : "Engine host unreachable."
           }</div>
-          <div class="empty-hero-grid">${cards}</div>
+          <div class="empty-hero-grid" style="grid-template-columns: repeat(4, 1fr);">${cards}</div>
         </div>
       </div>
     </div>`;
@@ -422,36 +448,51 @@ function renderEmptyView(): string {
 function renderPromptView(): string {
   const events = ViewData.events.slice(-12).reverse();
 
+  // Totals across every session the engine knows about, so the header answers
+  // "how much have my agents burned" without opening each one.
+  let totalIn = 0;
+  let totalOut = 0;
+  for (const s of ViewData.sessions) {
+    totalIn += s.usage?.input ?? 0;
+    totalOut += s.usage?.output ?? 0;
+  }
+  const working = ViewData.sessions.filter((s) => s.status === "working").length;
+  const waiting = ViewData.sessions.filter((s) => s.status === "waiting").length;
+  const totals =
+    totalIn + totalOut > 0
+      ? ` · ${fmtTokens(totalIn)} in / ${fmtTokens(totalOut)} out`
+      : "";
+
   return `
     <div class="view on">
       <div class="card cli-card">
         <div class="activity-feed-container">
           <div class="activity-header">
-            <span>Agent Telemetry & Tool Activity Stream</span>
-            <span style="font-size:10px;font-weight:400;color:var(--dim-3);">${ViewData.sessions.length} active agent(s)</span>
+            <span>Agent Activity</span>
+            <span style="font-size:10px;font-weight:400;color:var(--dim-3);">${ViewData.sessions.length} session(s) · ${working} working · ${waiting} waiting${totals}</span>
           </div>
 
           <div class="activity-list">
             ${
               events.length > 0
                 ? events
-                    .map(
-                      (ev) => `
-                <div class="activity-item">
-                  <span class="activity-time">${esc(ev.time)}</span>
-                  <span style="display:flex;align-items:center;color:#3B82F6;">
-                    ${svg(getAgentIcon(ev.runtime), 11).outerHTML}
-                  </span>
-                  <span class="activity-badge">${esc(ev.type)}</span>
-                  <span class="activity-desc">${esc(ev.message || ev.tool || ev.command || "Executing...")}</span>
-                </div>
-              `,
-                    )
+                    .map((ev) => {
+                      const color = activityKindColor(ev.type);
+                      const detail = ev.message || ev.command || ev.path || ev.tool || "";
+                      return `
+                <div class="act-row">
+                  <span class="act-dot" style="background:${color}"></span>
+                  <div class="act-body">
+                    <div class="act-title">${esc(ev.type)} <span class="act-who">· ${esc(ev.runtime)} · ${esc(ev.time)}</span></div>
+                    ${detail ? `<div class="act-detail" title="${esc(detail)}">${esc(detail)}</div>` : ""}
+                  </div>
+                </div>`;
+                    })
                     .join("")
                 : `
               <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:8px;color:var(--dim-3);font-size:11px;">
                 <div class="compact-dot-blue" style="width:8px;height:8px;"></div>
-                <span>Waiting for agent events from Zeus Gateway...</span>
+                <span>No agent events yet.</span>
               </div>
             `
             }
@@ -460,6 +501,18 @@ function renderPromptView(): string {
         </div>
       </div>
     </div>`;
+}
+
+/** One color per event family, shared with the log ticker in main.ts. */
+function activityKindColor(kind: string): string {
+  if (kind.startsWith("tool.")) return "#3B82F6";
+  if (kind.startsWith("file.")) return "#22C55E";
+  if (kind.startsWith("command.")) return "#A78BFA";
+  if (kind.startsWith("agent.")) return "#9CA3AF";
+  if (kind.startsWith("session.")) return "#38BDF8";
+  if (kind.startsWith("permission.")) return "#F5A524";
+  if (kind.startsWith("input.")) return "#22D3EE";
+  return "#6b7079";
 }
 
 function renderSessionComposer(): string {
@@ -481,16 +534,43 @@ function renderSessionComposer(): string {
  *  the header. */
 function renderMediaView(): string {
   const media = ViewData.media;
+  const pct =
+    media.duration_secs > 0
+      ? Math.min(100, (media.position_secs / media.duration_secs) * 100)
+      : 0;
+  const progress =
+    media.available && media.duration_secs > 0
+      ? `
+      <div class="media-progress">
+        <span class="media-progress-time">${fmtClock(media.position_secs)}</span>
+        <div class="media-progress-track">
+          <div class="media-progress-fill${media.playing ? " live" : ""}" style="width:${pct.toFixed(1)}%"></div>
+        </div>
+        <span class="media-progress-time">${fmtClock(media.duration_secs)}</span>
+      </div>`
+      : "";
+
   return `
     <div class="view on">
       <div class="card">
         <div class="media-body">
-          <div class="media-track">
-            <span class="media-note">${svg(ICONS.music, 18).outerHTML}</span>
-            <div class="media-text">
-              <div class="media-title">${esc(media.available && media.title ? media.title : "Nothing playing")}</div>
-              <div class="media-artist">${esc(media.available ? media.artist || "Unknown artist" : "Start music on this PC and it shows up here")}</div>
+          <div class="media-left">
+            <div class="media-track">
+              ${
+                media.thumbnail
+                  ? `<img class="media-cover" src="${media.thumbnail}" alt="" />`
+                  : `<span class="media-note">${svg(ICONS.music, 18).outerHTML}</span>`
+              }
+              <div class="media-text">
+                <div class="media-title">${esc(media.available && media.title ? media.title : "Nothing playing")}</div>
+                <div class="media-artist">${esc(
+                  media.available
+                    ? [media.artist, media.album].filter(Boolean).join(" — ") || "Unknown artist"
+                    : "Start music on this PC and it shows up here",
+                )}</div>
+              </div>
             </div>
+            ${progress}
           </div>
           <div class="media-controls">
             <button class="media-btn" data-act="media-previous" title="Previous" ${media.available ? "" : "disabled"}>
@@ -506,6 +586,12 @@ function renderMediaView(): string {
         </div>
       </div>
     </div>`;
+}
+
+/** m:ss for the progress bar. */
+function fmtClock(secs: number): string {
+  const s = Math.max(0, Math.round(secs));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
 function renderSettingsView(): string {
@@ -595,13 +681,15 @@ export function renderCompactContent(): string {
     return `
       <div class="compact-telemetry">
         <span class="compact-dot-blue"></span>
-        <span class="compact-idle-label">Zeus Agent Control Plane</span>
+        <span class="compact-idle-label">Zeus</span>
       </div>`;
   }
 
+  const working = ViewData.sessions.filter((s) => s.status === "working").length;
   const isWaiting = f.status === "waiting";
   const isApproval = f.last_event === "permission.requested";
   const isInput = f.last_event === "input.requested";
+  const isDone = f.status === "completed";
   const icon = getAgentIcon(f.runtime);
   const text = f.message || f.status || "Active";
 
@@ -622,13 +710,27 @@ export function renderCompactContent(): string {
     `;
   }
 
+  if (isDone) {
+    return `
+      <div class="compact-telemetry">
+        <span class="compact-badge-icon" style="color:#22C55E;">
+          ${svg(ICONS.check, 13).outerHTML}
+        </span>
+        <span class="compact-text"><b>${esc(f.runtime)}</b> finished</span>
+      </div>
+    `;
+  }
+
+  // Working: the pulse is what tells you at a glance that an agent is alive;
+  // a static dot reads as idle.
   return `
     <div class="compact-telemetry">
+      <span class="compact-pulse"></span>
       <span class="compact-badge-icon" style="color:#3B82F6;">
         ${svg(icon, 13).outerHTML}
       </span>
       <span class="compact-text" title="${esc(f.message || '')}"><b>${esc(f.runtime)}</b>: ${esc(text)}</span>
-      <span class="compact-dot-working"></span>
+      ${working > 1 ? `<span class="compact-count">${working}</span>` : ""}
     </div>
   `;
 }

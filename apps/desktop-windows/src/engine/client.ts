@@ -151,7 +151,11 @@ export interface NowPlaying {
   available: boolean;
   title: string;
   artist: string;
+  album: string;
   playing: boolean;
+  position_secs: number;
+  duration_secs: number;
+  thumbnail: string;
 }
 
 export const mediaNowPlaying = () => invoke<NowPlaying>("media_now_playing");

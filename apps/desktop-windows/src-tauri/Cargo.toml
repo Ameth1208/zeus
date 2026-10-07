@@ -24,6 +24,7 @@ keyring = { version = "3", features = ["apple-native", "windows-native", "sync-s
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-notification = "2"
 ureq = { version = "3.4.2", default-features = false, features = ["json", "rustls", "platform-verifier"] }
+base64 = "0.22"
 uuid = { version = "1", features = ["v4"] }
 sha2 = "0.10"
 
@@ -32,4 +33,7 @@ windows = { version = "0.61", features = [
     "Media_Control",
     "Foundation",
     "Storage_Streams",
+    "Win32_Foundation",
+    "Win32_System_SystemInformation",
+    "Win32_System_Time",
 ] }

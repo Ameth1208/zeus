@@ -200,15 +200,14 @@ npm run tauri build   # release exe + msi + nsis
 Non-negotiable, because the desktop island is a transparent always-on-top panel
 and the design only works as a set:
 
-- The island body is **liquid glass**, not flat black: fill `--glass-fill`
-  (`rgba(16,18,23,0.58)`) over `backdrop-filter: blur(30px) saturate(170%)`,
-  a 1 px `--glass-edge` hairline, an inset top highlight and the specular
-  `#island::before` sheen. The window stays transparent; the material is what
-  sells the depth. Cards are white at 5.5%, flat cards at 3.5%, hairlines at
-  8% — all translucent, so the blur reads through every layer.
-- The aesthetic reference is Apple's materials (macOS `NSVisualEffectView`,
-  Grokbot-style frosted panels). On macOS use `.ultraThinMaterial`; on mobile
-  `BackdropFilter`. Never paint an opaque surface where a material belongs.
+- The island body is a **solid slab**, not blur: `--glass-fill` is the opaque
+  `#13161d`, with a 1 px `--glass-edge` hairline, an inset top highlight, the
+  specular `#island::before` sheen and the drop shadow. No `backdrop-filter`:
+  on an always-on-top panel it only smears whatever desktop is behind it, and
+  re-blurring every animation frame is a real GPU cost.
+- The aesthetic reference is Apple's materials. On macOS use
+  `.ultraThinMaterial`; on mobile `BackdropFilter`. The Windows island is the
+  exception: opaque fill + sheen, never blur.
 - Geometry is mode + view → `(w, h, radius)` via `island/layout.ts`. The
   silhouette is plain `border-radius` (`0 0 r r`, flush against the top edge);
   `island/shape.ts` and its `topRadius` ear cutouts are retired legacy — do

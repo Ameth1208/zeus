@@ -90,46 +90,51 @@ impl Relay {
             engine.gateway.set_state(LinkState::Offline);
             return false;
         }
-        std::thread::spawn(move || loop {
-            let outcome = Self::round(&engine);
-            match outcome {
-                Ok(sent) => {
-                    engine.gateway.set_state(LinkState::Online);
-                    if sent > 0 {
-                        log(&format!("relay: {sent} event(s) delivered"));
+        std::thread::spawn(move || {
+            // One agent for the relay's whole life. Building a fresh TLS stack
+            // every tick leaks handles and, over hours, is exactly the kind of
+            // slow exhaustion that freezes the host.
+            let agent = ureq::Agent::config_builder()
+                .timeout_global(Some(Duration::from_secs(10)))
+                .user_agent(USER_AGENT)
+                .tls_config(
+                    ureq::tls::TlsConfig::builder()
+                        .root_certs(ureq::tls::RootCerts::PlatformVerifier)
+                        .build(),
+                )
+                .build()
+                .new_agent();
+            loop {
+                let outcome = Self::round(&engine, &agent);
+                match outcome {
+                    Ok(sent) => {
+                        engine.gateway.set_state(LinkState::Online);
+                        if sent > 0 {
+                            log(&format!("relay: {sent} event(s) delivered"));
+                        }
+                        std::thread::sleep(TICK);
                     }
-                    std::thread::sleep(TICK);
-                }
-                Err(err) => {
-                    engine.gateway.set_state(LinkState::Offline);
-                    log(&format!("relay offline: {err}"));
-                    std::thread::sleep(BACKOFF);
+                    Err(err) => {
+                        engine.gateway.set_state(LinkState::Offline);
+                        log(&format!("relay offline: {err}"));
+                        std::thread::sleep(BACKOFF);
+                    }
                 }
             }
         });
         true
     }
 
-    fn round(engine: &Arc<ZeusEngine>) -> Result<usize, String> {
+    fn round(engine: &Arc<ZeusEngine>, agent: &ureq::Agent) -> Result<usize, String> {
         let endpoint = engine
             .gateway
             .endpoint()
             .ok_or_else(|| "gateway not configured".to_string())?;
-        let agent = ureq::Agent::config_builder()
-            .timeout_global(Some(Duration::from_secs(10)))
-            .user_agent(USER_AGENT)
-            .tls_config(
-                ureq::tls::TlsConfig::builder()
-                    .root_certs(ureq::tls::RootCerts::PlatformVerifier)
-                    .build(),
-            )
-            .build()
-            .new_agent();
 
-        let sent = Self::upload_events(engine, &agent, &endpoint)?;
-        Self::upload_digests(engine, &agent, &endpoint)?;
-        Self::beat(engine, &agent, &endpoint)?;
-        Self::handle_commands(engine, &agent, &endpoint)?;
+        let sent = Self::upload_events(engine, agent, &endpoint)?;
+        Self::upload_digests(engine, agent, &endpoint)?;
+        Self::beat(engine, agent, &endpoint)?;
+        Self::handle_commands(engine, agent, &endpoint)?;
         Ok(sent)
     }
 

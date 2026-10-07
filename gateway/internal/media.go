@@ -7,10 +7,16 @@ import (
 
 // MediaState is one desktop's now-playing snapshot.
 type MediaState struct {
-	MachineID string    `json:"machine_id"`
-	Title     string    `json:"title"`
-	Artist    string    `json:"artist"`
-	Playing   bool      `json:"playing"`
+	MachineID    string  `json:"machine_id"`
+	Title        string  `json:"title"`
+	Artist       string  `json:"artist"`
+	Album        string  `json:"album,omitempty"`
+	Playing      bool    `json:"playing"`
+	PositionSecs float64 `json:"position_secs"`
+	DurationSecs float64 `json:"duration_secs"`
+	// Thumbnail is a data URL of the album art; inline because a phone has no
+	// other path to the desktop's filesystem.
+	Thumbnail string    `json:"thumbnail,omitempty"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
