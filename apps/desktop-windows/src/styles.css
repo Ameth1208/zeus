@@ -582,9 +582,12 @@ body {
   height: 100%;
 }
 
+/* Wide enough for the mascot plus a readable measure. It grew again — 322 → 356
+   → 384 — because the mascot went from 66 to 80px, and the text column had to
+   keep a usable measure rather than be squeezed to a few words per line. */
 .overview > .left {
-  flex: 0 0 322px;
-  width: 322px;
+  flex: 0 0 384px;
+  width: 384px;
 }
 
 .overview > .right {
@@ -1603,10 +1606,15 @@ input:focus, textarea:focus {
   padding: 0;
 }
 
+/* The scroller itself takes the wheel. Wheel events over the panel reach the
+   webview, but `islandEl` has a mousedown handler that expands the island from
+   anywhere that is not a control, so the scroll container needs an explicit
+   `overscroll-behavior` and its own cursor to stay obviously draggable. */
 .settings-scroll {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
+  overscroll-behavior: contain;
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -1712,9 +1720,116 @@ input:focus, textarea:focus {
   transform: translateY(-1px);
 }
 
-/* Launcher and live composer reuse the current island materials and type scale. */
+/* Runtime choice cards. This was the only rule these had — a height and nothing
+   else — so the buttons were default-styled: no surface, no selected state, no
+   icon treatment. A runtime you have chosen is the decision that arms the Launch
+   button below, so it has to be legible as chosen at a glance. */
 .launcher-card {
-  height: 100%;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  padding: 9px 11px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--ink-2);
+  cursor: pointer;
+  transition: background 0.14s ease-out, border-color 0.14s ease-out, color 0.14s ease-out;
+}
+
+.launcher-card:hover {
+  background: rgba(255, 255, 255, 0.055);
+  border-color: rgba(255, 255, 255, 0.16);
+  color: var(--ink);
+}
+
+.launcher-card:active { background: rgba(255, 255, 255, 0.03); }
+
+/* Selected: an ink fill rather than a coloured one, so choosing a runtime does
+   not introduce the one saturated element this panel avoids everywhere else.
+   The text flips to dark because the fill is light. */
+.launcher-card.chosen {
+  border-color: transparent;
+  background: var(--ink);
+  color: #0b0c0e;
+}
+
+.launcher-card.chosen .runtime-icon { color: #0b0c0e !important; }
+.launcher-card.chosen:hover { background: #ffffff; }
+
+.launcher-card .runtime-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.launcher-card .runtime-name {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.launcher-card .runtime-label {
+  font: 600 11.5px var(--font);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The capabilities under the name. This is the line that stops the list being a
+   row of unexplained buttons: it says what pressing this one will do, and it is
+   what makes a watch-only runtime visibly different from a launchable one. */
+.launcher-card .runtime-caps {
+  font: 400 9px var(--font);
+  color: var(--dim-4);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.launcher-card.chosen .runtime-caps { color: rgba(11, 12, 14, 0.62); }
+
+/* Present but not drivable. Dimmed and dashed rather than hidden: the user needs
+   to see it exists, and hiding it is what made "no runtime installed" appear on
+   a machine with OpenCode on PATH. */
+.launcher-card.watch-only {
+  border-style: dashed;
+  border-color: rgba(255, 255, 255, 0.07);
+  color: var(--dim-3);
+  cursor: default;
+  background: transparent;
+}
+
+.launcher-card.watch-only:hover { background: transparent; color: var(--dim-3); }
+.launcher-card.watch-only .runtime-icon { opacity: 0.5; }
+
+/* The folder picker, labelled — a bare icon was not identifiable as the control
+   that sets the working directory. */
+.launcher-open {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 29px;
+  padding: 0 11px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  background: transparent;
+  color: var(--dim-2);
+  font: 500 11px var(--font);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.13s ease-out, color 0.13s ease-out;
+}
+
+.launcher-open:hover { background: rgba(255, 255, 255, 0.07); color: var(--ink); }
+.launcher-open:active { background: rgba(255, 255, 255, 0.04); }
+
+/* A launcher with one runtime available does not need to be told to pick: the
+   single card fills the row instead of sitting at 150px in a grid. */
+.launcher-grid {
+  grid-template-columns: repeat(auto-fit, minmax(150px, max-content));
 }
 
 /* Launcher: runtime choice, then the task, then the path and the button.
@@ -1722,7 +1837,7 @@ input:focus, textarea:focus {
    to run it — so nothing else goes above the task field. */
 .launcher-body {
   height: 100%;
-  padding: 12px 16px 14px 100px;
+  padding: 12px 16px 14px var(--content-gutter, 108px);
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -1811,9 +1926,8 @@ input:focus, textarea:focus {
   gap: 5px;
 }
 
-/* Path field plus the browse button as one control: the button sits flush
-   inside the field's right edge so it reads as part of the input rather than as
-   a separate button beside it. */
+/* The path field. A real input with its own border now that the picker is a
+   labelled button beside it rather than a glyph wedged inside the field. */
 .launcher-cwd-row {
   display: flex;
   align-items: stretch;
@@ -1824,7 +1938,7 @@ input:focus, textarea:focus {
   transition: border-color 0.15s ease-out;
 }
 
-.launcher-cwd-row:focus-within { border-color: rgba(59, 130, 246, 0.42); }
+.launcher-cwd-row:focus-within { border-color: rgba(255, 255, 255, 0.22); }
 
 .launcher-cwd {
   flex: 1 1 auto;
@@ -1835,22 +1949,6 @@ input:focus, textarea:focus {
   background: transparent;
   font: 400 11px var(--mono);
 }
-
-.launcher-browse {
-  flex: 0 0 auto;
-  width: 30px;
-  display: grid;
-  place-items: center;
-  border: 0;
-  border-left: 1px solid var(--hairline);
-  background: transparent;
-  color: var(--dim-2);
-  cursor: pointer;
-  transition: background 0.13s ease-out, color 0.13s ease-out;
-}
-
-.launcher-browse:hover { background: rgba(255, 255, 255, 0.07); color: var(--ink); }
-.launcher-browse:active { background: rgba(255, 255, 255, 0.04); }
 
 .launcher-launch {
   flex: 0 0 auto;
@@ -2269,7 +2367,7 @@ input:disabled {
 .view-on .agent-runtime-grid { padding-left: 12px; }
 
 /* Approval card takes the mascot gutter. */
-.approval-body { padding-left: 132px; }
+.approval-body { padding-left: var(--content-gutter, 124px); }
 
 
 /* empty/hero home: a clean vertical stack. mascot gets the top band, the name
@@ -2309,9 +2407,11 @@ input:disabled {
   gap: 5px;
   width: 100%;
   margin-top: 8px;
-  /* Clear the mascot gutter. Mochi is painted on the canvas at this view's botX,
-   * so the chip row has to start to its right or the first chip sits under it. */
-  padding-left: 92px;
+  /* Clear the mascot gutter. Mochi is painted on the canvas at this view's
+   * botX, so the chip row has to start to its right or the first chip sits
+   * under it. Kept in step with the `empty` entry's botX and diameter in
+   * `island/layout.ts`. */
+  padding-left: var(--content-gutter, 134px);
 }
 .empty-hero-grid .agent-runtime-card {
   min-width: 0;
@@ -2365,7 +2465,7 @@ input:disabled {
 /* Views that show the mascot on the left must not let content touch it. */
 .card.has-mascot > .stack,
 .card.has-mascot > .approval-body {
-  padding-left: 136px;
+  padding-left: var(--content-gutter, 124px);
 }
 
 /* The prompt view keeps the feed full-bleed and indents its contents instead
@@ -2373,7 +2473,7 @@ input:disabled {
    span the whole island and the mascot gutter reads as one column of empty
    panel rather than as a broken edge on each row. */
 .card.has-mascot > .activity-feed-container > * {
-  padding-left: 136px;
+  padding-left: var(--content-gutter, 124px);
 }
 
 .agent-runtime-grid {
@@ -2413,9 +2513,9 @@ input:disabled {
 .media-body {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 14px;
   height: 100%;
-  padding: 16px 18px;
+  padding: 14px 16px;
 }
 
 .media-text { min-width: 0; }
@@ -2456,8 +2556,8 @@ input:disabled {
 .media-btn {
   display: grid;
   place-items: center;
-  width: 36px;
-  height: 36px;
+  width: 30px;
+  height: 30px;
   border-radius: 50%;
   border: 1px solid rgba(255, 255, 255, 0.09);
   background: rgba(255, 255, 255, 0.05);
@@ -2475,8 +2575,8 @@ input:disabled {
 .media-btn:disabled { opacity: 0.4; cursor: default; }
 
 .media-btn.primary {
-  width: 44px;
-  height: 44px;
+  width: 34px;
+  height: 34px;
   background: var(--ink);
   color: #0b0c0e;
   border-color: transparent;
@@ -2604,48 +2704,386 @@ input:disabled {
 
 .home-stat b { color: var(--ink); font-weight: 700; }
 
+/* The session column. Its layout lived as an inline style on the card body,
+   which meant the scroll behaviour could not be styled or overridden without
+   touching the markup. */
+.home-sessions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow: hidden;
+}
+
+.home-session-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* ── The work panel ────────────────────────────────────────────────────
+   The focused agent, and the only thing you look at while something runs.
+   Every class here previously had no rule at all, so the panel was rendering
+   as bare divs with a few inline styles. It now has a structure:
+
+     [ avatar chip ......................... status ]
+     ┌ detail box: tool · message · usage · log ┐
+     [ actions .................................. ]
+
+   The detail box is inset and faintly lifted so the message has a floor to sit
+   on; it is the one region on the panel that scrolls, because a long tool
+   output must not push the buttons out of the island. */
+.agent-work-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  height: 100%;
+  /* Derived from the layout, not written here. See `contentGutter()` — a literal
+     in this file silently drifted out of step with the mascot's position and let
+     the text run under it. */
+  padding: 0 14px 12px var(--content-gutter, 126px);
+}
+
+.work-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex: 0 0 auto;
+  padding-top: 2px;
+}
+
+.work-agent-chip {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  font: 600 12px var(--font);
+}
+
+
+.work-agent-name { color: var(--ink); }
+
+.work-agent-model {
+  font: 400 9.5px var(--font);
+  color: var(--dim-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Status is a word plus a ring, not a filled pill: it sits on the panel's
+   header line where a solid block would compete with the runtime name. */
+.work-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+  font: 600 10px var(--font);
+  text-transform: capitalize;
+  letter-spacing: 0.01em;
+}
+
+.work-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px currentColor;
+}
+
+/* Only `working` breathes. `waiting` deliberately does not: waiting is a state
+   that persists until a human acts, and animating it would make a blocked
+   session look busy — the exact opposite of what it needs to signal. */
+.work-status-dot.working { animation: work-breathe 1.6s ease-in-out infinite; }
+
+@keyframes work-breathe {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.82); }
+}
+
+.work-detail-box {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 9px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 11px;
+  background: rgba(255, 255, 255, 0.022);
+}
+
+.work-detail-box::-webkit-scrollbar { width: 5px; }
+.work-detail-box::-webkit-scrollbar-track { background: transparent; }
+.work-detail-box::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+}
+
+/* The file being touched. Sits at the top of the detail box as its own line,
+   in mono, because it is a locator and not prose — the reader is going to go
+   open it. The verb is uppercase and quiet so the path leads. */
+.work-file {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  user-select: text;
+}
+
+.work-file-verb {
+  flex: 0 0 auto;
+  font: 500 9px var(--font);
+  color: var(--dim-4);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.work-file-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  font: 400 11px var(--mono);
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* A line number is a precise reference, so it stays ink rather than dim: it is
+   the difference between "overview.ts" and "overview.ts:142" as a locator. */
+.work-file-line {
+  flex: 0 0 auto;
+  font: 400 11px var(--mono);
+  color: var(--dim-2);
+}
+
+/* Replaces the file locator once a session has ended. Quieter than the file
+   line on purpose: the outcome is a fact to notice once, while the file was a
+   live thing to watch. */
+.work-outcome {
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  font: 600 11px var(--font);
+  color: var(--dim-2);
+  letter-spacing: 0.01em;
+}
+
+/* An ended session's box loses its lift. The detail box is framed to look like
+   something in progress; once nothing is in progress the frame should go. */
+.work-detail-box.ended {
+  background: transparent;
+  border-color: transparent;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.work-tool-line {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font: 500 9.5px var(--font);
+  color: var(--dim-3);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.work-tool-line > span {
+  font: 400 9px var(--font);
+  color: var(--dim-4);
+}
+
+/* The message is the loudest thing in the panel. It is what the user came to
+   read, so it gets the ink tone and the largest measure here. */
+.work-msg-line {
+  font: 400 12px/1.45 var(--font);
+  color: var(--ink);
+  user-select: text;
+}
+
+.work-usage-line {
+  font: 400 9.5px var(--font);
+  color: var(--dim-3);
+  font-variant-numeric: tabular-nums;
+  margin-top: auto;
+  padding-top: 4px;
+}
+
+/* Mount point for the scroll ticker. `margin-top: auto` used to be an inline
+   style, which meant it only worked if nothing else had claimed the slack. */
+.work-ticker {
+  flex: 0 0 auto;
+  padding-top: 6px;
+  margin-top: auto;
+}
+
+.work-actions-row {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 25px;
+}
+
+/* In-panel action buttons. Sized down from the standalone `.btn` because these
+   sit in a 25px row, not on their own line. */
+.work-actions-row .btn {
+  height: 25px;
+  padding: 0 12px;
+  border-radius: 7px;
+  font: 600 11px var(--font);
+  cursor: pointer;
+  transition: background 0.14s ease-out, color 0.14s ease-out;
+}
+
+.work-actions-row .btn.primary {
+  border: 0;
+  background: var(--ink);
+  color: #0b0c0e;
+}
+
+.work-actions-row .btn.primary:hover { background: #ffffff; }
+.work-actions-row .btn.primary:active { background: rgba(245, 246, 248, 0.82); }
+
+/* Ghost, not secondary: a bordered secondary against a black panel reads as a
+   second filled control next to the primary. */
+.work-actions-row .btn.ghost {
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  background: transparent;
+  color: var(--dim-2);
+}
+
+.work-actions-row .btn.ghost:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--ink);
+}
+
+.work-actions-row .btn.ghost:active { background: rgba(255, 255, 255, 0.03); }
+
+/* The runtime is observed, not owned: an honest statement in place of a Stop
+   button the user would never be able to press. */
+.work-observed {
+  font: 400 9.5px/1.35 var(--font);
+  color: var(--dim-4);
+}
+
+/* [avatar] [state · file] [View]
+   The row is a reading first and a control second. Everything the eye needs in
+   order sits in the middle column so a glance resolves top-to-bottom, and the
+   single action is pinned right where the pointer already is. */
 .session-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
+  gap: 10px;
+  padding: 7px 9px;
   border-radius: 10px;
   cursor: pointer;
+  /* The avatar carries the state colour, so the row needs no coloured border to
+     mark the focused one. A lift is enough and it stays monochrome. */
   transition: background 0.15s;
 }
 
 .session-row:hover { background: rgba(255, 255, 255, 0.05); }
 
-.session-row-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
+.session-row.focused {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+/* A ring around the avatar rather than a separate dot: the state used to be a
+   7px circle sitting beside the icon, which meant reading two small marks to
+   learn one thing. */
+.session-avatar {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
   flex: 0 0 auto;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px currentColor;
 }
 
-.session-row-dot.working { animation: compact-dot-breathe 1.6s ease-in-out infinite; }
-
-@keyframes compact-dot-breathe {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.45; }
-}
-
-.session-row-name {
-  font-size: 11.5px;
-  font-weight: 600;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.session-row-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
   flex: 1;
   min-width: 0;
 }
 
-.session-row-meta {
-  font-size: 9.5px;
-  color: var(--dim-3);
-  font-variant-numeric: tabular-nums;
-  flex: 0 0 auto;
+.session-row-title {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
+
+.session-row-detail {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  font-size: 9.5px;
+}
+
+.session-row-status {
+  flex: 0 0 auto;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+/* The file is the live part of the row, so it truncates rather than pushing the
+   state word out of the row. */
+.session-row-file {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--dim-3);
+  font-family: var(--mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* What the agent did to the file. Uppercase and dim so `edit overview.ts:142`
+   reads as one locator with a qualifier, not as three competing words. */
+.session-row-verb {
+  font-family: var(--font);
+  font-size: 8.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--dim-4);
+}
+
+.session-row-line { color: var(--dim-2); }
+
+/* Text, not a filled pill: it is one of several rows and a solid block per row
+   turned the list into a stack of buttons. */
+.session-row-view {
+  flex: 0 0 auto;
+  padding: 3px 9px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--dim-2);
+  font: 500 10px var(--font);
+  cursor: pointer;
+  transition: background 0.13s ease-out, color 0.13s ease-out, border-color 0.13s ease-out;
+}
+
+.session-row-view:hover {
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--ink);
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+.session-row-view:active { background: rgba(255, 255, 255, 0.04); }
 
 /* Empty view: icon grid, no prose. */
 .empty-agent {
@@ -2761,3 +3199,4 @@ input:disabled {
   justify-content: center;
   gap: 10px;
 }
+

@@ -25,7 +25,11 @@ pub fn without_console_window_pub(command: &mut Command) {
 }
 
 /// Runs a command and captures stdout without ever opening a console.
-pub fn run_headless(binary: &str, args: &[String], cwd: &std::path::Path) -> std::io::Result<std::process::Output> {
+pub fn run_headless(
+    binary: &str,
+    args: &[String],
+    cwd: &std::path::Path,
+) -> std::io::Result<std::process::Output> {
     let mut command = Command::new(binary);
     command
         .args(args)
@@ -37,9 +41,61 @@ pub fn run_headless(binary: &str, args: &[String], cwd: &std::path::Path) -> std
     command.output()
 }
 
+/// Finds the executable behind a bare command name.
+///
+/// `Command::new(name)` resolves through `CreateProcess`, which appends `.exe`
+/// and nothing else. That misses the two shapes a package manager installs on
+/// Windows: a `.cmd` shim, and a bare POSIX script with no extension at all.
+/// pnpm ships both — `node_modules/.bin/codex` is a `#!/bin/sh` wrapper and
+/// `codex.cmd` sits beside it — so probing a pnpm-installed CLI by bare name
+/// reported "not installed" on a machine where it worked perfectly from a
+/// shell.
+///
+/// Order matters only for speed: the real `.exe` is preferred over a shim,
+/// because running the shim would need an interpreter we would rather not
+/// assume. When only a script is present we still call it, and accept that the
+/// call fails — the point here is to answer "is it on this machine", and a
+/// script on PATH is the machine saying yes.
+pub fn resolve_binary(name: &str) -> Option<std::path::PathBuf> {
+    use std::path::PathBuf;
+
+    // An explicit path is used as given. Wrapping it in the candidate walk
+    // would let a directory named `codex.exe` shadow a deliberate override.
+    if name.contains('/') || name.contains('\\') {
+        let direct = PathBuf::from(name);
+        return direct.is_file().then_some(direct);
+    }
+
+    let path = std::env::var_os("PATH")?;
+    let extensions: &[&str] = if cfg!(windows) {
+        // Bare name last: it is the only candidate that may not be executable.
+        &["exe", "cmd", "bat", ""]
+    } else {
+        &[""]
+    };
+
+    for dir in std::env::split_paths(&path) {
+        if dir.as_os_str().is_empty() {
+            continue;
+        }
+        for ext in extensions {
+            let mut candidate = dir.clone();
+            candidate.push(format!("{name}.{ext}"));
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+    None
+}
+
 /// Runs a probe like `--version` without ever opening a console.
 pub fn probe(binary: &str, args: &[&str]) -> bool {
-    let mut command = Command::new(binary);
+    // A path that already resolves — an override, or a candidate we found — is
+    // used directly. A bare name goes through the candidate walk first, so a
+    // pnpm shim does not read as an absent CLI.
+    let program = resolve_binary(binary).unwrap_or_else(|| std::path::PathBuf::from(binary));
+    let mut command = Command::new(program);
     command
         .args(args)
         .stdin(Stdio::null())
@@ -47,6 +103,16 @@ pub fn probe(binary: &str, args: &[&str]) -> bool {
         .stderr(Stdio::null());
     without_console_window_pub(&mut command);
     command.status().map(|s| s.success()).unwrap_or(false)
+}
+
+/// True when the command exists on this machine, without running it.
+///
+/// For runtimes with no managed transport: the panel must still be able to say
+/// "this CLI is here" about something it cannot drive, and that question is
+/// about the filesystem, not about whether the binary cooperates with
+/// `--version`.
+pub fn binary_present(binary: &str) -> bool {
+    resolve_binary(binary).is_some()
 }
 
 /// A live child the supervisor owns.

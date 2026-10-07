@@ -29,6 +29,11 @@ pub struct RuntimeRegistry {
     drivers: BTreeMap<String, Arc<dyn AgentRuntimeDriver>>,
     observed: BTreeMap<String, Arc<ObservedDriver>>,
     info: Vec<RuntimeInfo>,
+    /// Command name per runtime, including the ones with no managed driver.
+    /// A driver owns its own binary name, but the registry also has to answer
+    /// "is opencode installed" for a runtime it cannot drive, and there is no
+    /// driver to ask.
+    binaries: BTreeMap<String, String>,
 }
 
 impl Default for RuntimeRegistry {
@@ -41,6 +46,7 @@ impl RuntimeRegistry {
     pub fn new() -> Self {
         let mut drivers: BTreeMap<String, Arc<dyn AgentRuntimeDriver>> = BTreeMap::new();
         let mut observed: BTreeMap<String, Arc<ObservedDriver>> = BTreeMap::new();
+        let mut binaries: BTreeMap<String, String> = BTreeMap::new();
 
         for driver in [
             Arc::new(CodexDriver::new()) as Arc<dyn AgentRuntimeDriver>,
@@ -49,6 +55,7 @@ impl RuntimeRegistry {
         ] {
             let name = driver.name().to_string();
             observed.insert(name.clone(), Arc::new(ObservedDriver::new(&name)));
+            binaries.insert(name.clone(), driver.binary_name().to_string());
             drivers.insert(name, driver);
         }
 
@@ -56,6 +63,7 @@ impl RuntimeRegistry {
         // events only. Listing it as observed rather than omitting it keeps the
         // island honest about what exists on the machine.
         observed.insert("opencode".into(), Arc::new(ObservedDriver::new("opencode")));
+        binaries.insert("opencode".into(), "opencode".into());
 
         let info = vec![
             RuntimeInfo {
@@ -84,6 +92,7 @@ impl RuntimeRegistry {
             drivers,
             observed,
             info,
+            binaries,
         }
     }
 
@@ -107,17 +116,29 @@ impl RuntimeRegistry {
         let mut entries: Vec<RuntimeEntry> = self
             .info
             .iter()
-            .map(|info| RuntimeEntry {
-                info: info.clone(),
-                managed: self.drivers.get(&info.id).map(|d| d.capabilities()),
-                observed: self.observed.contains_key(&info.id),
+            .map(|info| {
+                // A managed runtime answers "installed" by running its own
+                // `--version` probe. An observed-only runtime has to be asked
+                // the filesystem question directly, or the panel claims a CLI
+                // the user can run from a shell is missing.
+                let installed = match self.drivers.get(&info.id) {
+                    Some(driver) => driver.capabilities().installed,
+                    None => self
+                        .binaries
+                        .get(&info.id)
+                        .is_some_and(|b| crate::runtime::stdio::binary_present(b)),
+                };
+                RuntimeEntry {
+                    info: info.clone(),
+                    managed: self.drivers.get(&info.id).map(|d| d.capabilities()),
+                    observed: self.observed.contains_key(&info.id),
+                    installed,
+                }
             })
             .collect();
         entries.sort_by(|a, b| {
-            let a_installed = a.managed.as_ref().is_some_and(|c| c.installed);
-            let b_installed = b.managed.as_ref().is_some_and(|c| c.installed);
-            b_installed
-                .cmp(&a_installed)
+            b.installed
+                .cmp(&a.installed)
                 .then_with(|| a.info.label.cmp(&b.info.label))
         });
         entries
@@ -130,6 +151,10 @@ pub struct RuntimeEntry {
     /// `None` for runtimes Zeus has no managed transport for.
     pub managed: Option<Capabilities>,
     pub observed: bool,
+    /// Whether the CLI exists on this machine. Independent of `managed`: a
+    /// runtime can be present and still be unlaunchable, and the panel needs to
+    /// show both facts rather than collapsing them into one.
+    pub installed: bool,
 }
 
 impl RuntimeEntry {

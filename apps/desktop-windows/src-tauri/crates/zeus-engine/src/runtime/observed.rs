@@ -45,6 +45,16 @@ pub struct HookEvent {
     pub tool: String,
     #[serde(default)]
     pub path: String,
+    /// 1-based line the edit landed on, when the hook knows it. Separate from
+    /// `path` rather than part of it because a hook that only knows the file
+    /// still reports usefully, and `line: 0` would be indistinguishable from a
+    /// real line 0 if the two were concatenated.
+    #[serde(default)]
+    pub line: u32,
+    /// `new` / `edit` / `read`, from the hook. Lets the panel name what happened
+    /// to the file without parsing a diff out of the message.
+    #[serde(default)]
+    pub change: String,
     #[serde(default)]
     pub command: String,
     #[serde(default)]
@@ -133,6 +143,15 @@ impl ObservedDriver {
         if !hook.path.is_empty() {
             event = event.with_field("path", json!(hook.path));
         }
+        // Only copied when the hook actually supplied it. Writing `line: 0` for
+        // every file event would make the panel print a line number for the
+        // many tools that report a file but not a position.
+        if hook.line > 0 {
+            event = event.with_field("line", json!(hook.line));
+        }
+        if !hook.change.is_empty() {
+            event = event.with_field("change", json!(hook.change));
+        }
         if !hook.command.is_empty() {
             event = event.with_field("command", json!(hook.command));
         }
@@ -186,6 +205,13 @@ impl AgentRuntimeDriver for ObservedDriver {
             installed: true,
             version: None,
         }
+    }
+
+    fn binary_name(&self) -> &'static str {
+        // Leaked once per observed runtime, of which there are a handful, and
+        // the trait signature is `&'static str` so the registry can key on it
+        // without borrowing a driver that may not exist for this runtime.
+        Box::leak(self.runtime.clone().into_boxed_str())
     }
 
     fn detect(&self) -> bool {
@@ -258,6 +284,8 @@ mod tests {
             message: String::new(),
             tool: String::new(),
             path: String::new(),
+            line: 0,
+            change: String::new(),
             command: String::new(),
             metadata: None,
             seq: None,

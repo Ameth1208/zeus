@@ -4,7 +4,7 @@
 // in ../zeus/visuals, which owns runtime identity. This module depends on it, never
 // the other way round.
 
-import { RUNTIME_GLYPHS, visualForSession, visualFor } from "../zeus/visuals";
+import { RUNTIME_GLYPHS, runtimeColor, visualForSession, visualFor } from "../zeus/visuals";
 import { LUCIDE, BRANDS } from "../icons/generated";
 
 /** Vendored lucide glyph, stroked at 24x24. Defined inline so a misspelled name
@@ -45,7 +45,7 @@ export const ICONS = {
   opencode: RUNTIME_GLYPHS.opencode as string,
 } satisfies Record<string, UiIcon | string>;
 
-export { visualForSession, visualFor };
+export { runtimeColor, visualForSession, visualFor };
 
 /**
  * Glyph for a runtime name.

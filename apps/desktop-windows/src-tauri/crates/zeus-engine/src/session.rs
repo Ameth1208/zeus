@@ -6,11 +6,10 @@
 //! segfaulted" are the same event to a session table and very different events
 //! to a user: one is a decision, the other is a fault.
 
+use crate::event::now_ms;
 use crate::event::{EventKind, ZeusEvent};
 use crate::registry::RuntimeRegistry;
-use crate::runtime::{
-    Capability, DriverError, EventSink, LaunchSpec, Mode, RuntimeHandle,
-};
+use crate::runtime::{Capability, DriverError, EventSink, LaunchSpec, Mode, RuntimeHandle};
 use crate::store::LocalStore;
 use crate::tokens::{usage_from_payload, TokenUsage};
 use serde::{Deserialize, Serialize};
@@ -32,6 +31,31 @@ pub struct SessionView {
     pub usage: TokenUsage,
     pub digest_chars: usize,
     pub last_seq: u64,
+}
+
+/// How long an agent may be silent while its status still says "working".
+///
+/// Two minutes is long enough that a long tool call — a build, a test run, a
+/// model thinking for a while — is never mistaken for a dead one, and short
+/// enough that a crashed session stops claiming to be busy.
+const WORKING_STALE_MS: i64 = 120_000;
+
+/// The status to report, correcting a stored "working" that time has invalidated.
+///
+/// Only "working" is corrected, and only downward. A stored `waiting` is not
+/// time-sensitive — the user still owes an answer however long ago the request
+/// arrived — and `completed`/`failed`/`stopped` are terminal and never expire. A
+/// managed session with a live handle is left alone entirely: if Zeus is holding
+/// the process, it is working even when the runtime says nothing, which is the
+/// one case where silence is expected rather than suspicious.
+fn effective_status(stored: &str, updated_at: i64, now: i64, has_live_handle: bool) -> String {
+    if stored != "working" || has_live_handle {
+        return stored.to_string();
+    }
+    if updated_at > 0 && now.saturating_sub(updated_at) > WORKING_STALE_MS {
+        return "stale".to_string();
+    }
+    stored.to_string()
 }
 
 /// A live managed session. The handle is a value, not a process: dropping it
@@ -241,6 +265,7 @@ impl SessionManager {
     pub fn views(&self) -> Vec<SessionView> {
         let live = self.live.lock().unwrap_or_else(|e| e.into_inner());
         let usage = self.usage.lock().unwrap_or_else(|e| e.into_inner());
+        let now = now_ms();
         self.store
             .sessions()
             .into_iter()
@@ -262,7 +287,23 @@ impl SessionManager {
                         .unwrap_or(Mode::Managed),
                     project: record.project.clone(),
                     model: record.model.clone(),
-                    status: record.status.clone(),
+                    // Correct a stale "working" at read time rather than trusting
+                    // the stored status forever.
+                    //
+                    // `status_for` can only describe the newest event, so a
+                    // session that reported `tool.started` and then went quiet —
+                    // the process died, the hook stopped, the agent crashed —
+                    // stayed "working" indefinitely. The island then claimed an
+                    // agent was busy on a machine where nothing was running. A
+                    // managed session has a live handle we can check directly;
+                    // for an observed one, silence past the threshold is the only
+                    // signal available, and it is a truthful one.
+                    status: effective_status(
+                        &record.status,
+                        record.updated_at,
+                        now,
+                        live_session.is_some(),
+                    ),
                     live: live_session.is_some(),
                     capabilities: live_session
                         .map(|s| {

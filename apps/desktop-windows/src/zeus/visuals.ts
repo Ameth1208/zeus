@@ -132,6 +132,21 @@ export function allVisuals(): RuntimeVisual[] {
   return [...VISUALS];
 }
 
+/** Brand colour for a runtime, from this registry.
+ *
+ *  Runtime identity must never go through `colorForProject`. That function
+ *  hashes a *project* name into a shared palette, so passing it a runtime id
+ *  returned an arbitrary colour — and because the hash space is small, OpenCode
+ *  and Antigravity could come out the same blue, which is exactly the "OpenCode
+ *  painted with Antigravity's colour" report. A project's colour is derived on
+ *  purpose; a runtime's colour is a fact about the CLI and is declared here.
+ *
+ *  Falls back to the neutral glyph's grey so an unrecognised runtime is visibly
+ *  unknown rather than confidently coloured. */
+export function runtimeColor(runtime: string): string {
+  return visualForSession(runtime).color;
+}
+
 /** Runtimes that still need a Yesicon mark downloaded into assets/runtimes/. */
 export function pendingIconSources(): string[] {
   return VISUALS.filter((v) => v.source === "builtin").map((v) => v.id);

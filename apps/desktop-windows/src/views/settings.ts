@@ -1,8 +1,7 @@
 // Preferences and the runtime inventory. One row per question the panel can
 // answer: is this on, where does it point, what can Zeus drive.
 
-import { colorForProject } from "../zeus/frames";
-import { getAgentIcon } from "./icons";
+import { getAgentIcon, runtimeColor } from "./icons";
 import { svg } from "./dom";
 import { ViewData, esc } from "./state";
 
@@ -75,9 +74,14 @@ export function renderSettingsView(): string {
                   ? '<div class="agent-runtime-card"><span class="runtime-status">No runtimes detected</span></div>'
                   : ViewData.runtimes
                       .map((entry) => {
-                        const managed = entry.managed;
-                        const installed = !!managed?.installed;
-                        const caps = managed ? managed.available : entry.observed ? ["observe"] : [];
+                        // `entry.installed`, not `entry.managed?.installed`. The
+                        // host answers "is the CLI on this machine" for every
+                        // runtime, including the observed-only ones with no
+                        // managed transport — reading the managed field instead
+                        // reported opencode as absent purely because Zeus
+                        // cannot drive it.
+                        const installed = entry.installed;
+                        const caps = entry.managed ? entry.managed.available : entry.observed ? ["observe"] : [];
                         // What Zeus may actually do, not what the CLI offers.
                         // A runtime that can be launched but not stopped gets a
                         // launch claim and no stop claim — `can()` gates every
@@ -92,7 +96,7 @@ export function renderSettingsView(): string {
                         const tone = !installed ? "missing" : verbs.length ? "ready" : "observe";
                         return `
               <div class="agent-runtime-card runtime-${tone}" title="${esc(`${entry.info.label}: ${state}`)}">
-                <span class="runtime-icon" style="color:${colorForProject(entry.info.id)};">${svg(getAgentIcon(entry.info.id), 14).outerHTML}</span>
+                <span class="runtime-icon" style="color:${runtimeColor(entry.info.id)};">${svg(getAgentIcon(entry.info.id), 14).outerHTML}</span>
                 <span class="runtime-info">
                   <span class="runtime-name">${esc(entry.info.label)}</span>
                   <span class="runtime-status">${esc(state)}</span>

@@ -7,6 +7,7 @@ import { IslandFsm } from "./fsm";
 import {
   PANEL_W,
   botPosition,
+  contentGutter,
   islandSize,
   modeOrder,
   type IslandMode,
@@ -279,6 +280,12 @@ export class Island {
     islandEl.style.height = `${hh}px`;
     islandEl.style.borderRadius = `0 0 ${r}px ${r}px`;
     islandEl.style.transform = `translateX(-50%)`;
+
+    // Publish the gutter the current view needs so the stylesheet can indent its
+    // content past the mascot. Set on every geometry frame because the mascot
+    // travels between views while the panel is still resizing, and a gutter left
+    // over from the previous view is what produced text sitting under the dog.
+    islandEl.style.setProperty("--content-gutter", `${contentGutter(this.fsm.view)}px`);
 
     // Content is only visible and interactive when expanded
     const isExpanded = this.fsm.mode === "expanded";

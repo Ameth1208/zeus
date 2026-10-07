@@ -136,6 +136,10 @@ pub trait AgentRuntimeDriver: Send + Sync {
     /// Cheap check that the CLI is present and runnable.
     fn detect(&self) -> bool;
 
+    /// Command name this driver executes. The registry needs it to answer the
+    /// same question for observed-only runtimes, which have no driver to ask.
+    fn binary_name(&self) -> &'static str;
+
     /// Start a managed session. Events are reported through the sink.
     fn launch(&self, spec: LaunchSpec, sink: Arc<dyn EventSink>) -> DriverResult<RuntimeHandle>;
 

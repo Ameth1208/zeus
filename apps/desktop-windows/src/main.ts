@@ -10,7 +10,7 @@
 
 import "./styles.css";
 import { Island } from "./island";
-import { ViewData, renderHeader, renderViewContent, renderCompactContent } from "./views";
+import { ViewData, renderHeader, renderViewContent, renderCompactContent, refocusIfIdle } from "./views";
 import { uiStateForSessions, frameFor, describeEvent, type Session } from "./zeus/frames";
 import { Sound } from "./core/sound";
 import * as zeus from "./engine/client";
@@ -265,6 +265,12 @@ function syncMascotAndTicker(): void {
     island.fsm.pinned = false;
     island.setView("overview");
   }
+
+  // Only once the terminal view has had its moment. The pin above deliberately
+  // holds focus on the finished session so the outcome is readable; moving on
+  // immediately would defeat that, so the hand-off happens on the way back to
+  // the overview instead of at the moment of completion.
+  refocusIfIdle();
 
   const focus = ViewData.focus;
   if (!focus) {
@@ -532,6 +538,20 @@ document.addEventListener("click", async (e) => {
       Sound.play("deny");
       await decidePending(false);
       return;
+    case "view-session": {
+      // Focus the session, then move to the view that shows what it is doing.
+      // Focusing alone leaves the user on the home view staring at the same
+      // row they just clicked, which is why this is a separate action from
+      // `focus-session` rather than a modifier on it.
+      const found = ViewData.sessions.find((s) => s.id === actBtn.dataset.id);
+      if (!found) return;
+      ViewData.focus = found;
+      island.setView(found.status === "waiting" ? "approval" : "prompt");
+      Sound.play("blip");
+      syncMascotAndTicker();
+      render();
+      return;
+    }
     case "focus-session": {
       const found = ViewData.sessions.find((s) => s.id === actBtn.dataset.id);
       if (found) {
@@ -649,6 +669,8 @@ void zeus.onEvent((event) => {
     message: typeof event.payload.text === "string" ? event.payload.text : undefined,
     tool: typeof event.payload.tool === "string" ? event.payload.tool : undefined,
     path: typeof event.payload.path === "string" ? event.payload.path : undefined,
+    line: typeof event.payload.line === "number" ? event.payload.line : undefined,
+    change: typeof event.payload.change === "string" ? event.payload.change : undefined,
     command: typeof event.payload.command === "string" ? event.payload.command : undefined,
   });
   if (ViewData.events.length > 50) ViewData.events.shift();

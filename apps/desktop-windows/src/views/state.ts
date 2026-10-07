@@ -35,6 +35,10 @@ export interface EventItem {
   message?: string;
   tool?: string;
   path?: string;
+  /** 1-based line, only when the hook supplied one. Undefined means "the tool
+   *  reported a file but not a position", which is not the same as line 1. */
+  line?: number;
+  change?: string;
   command?: string;
 }
 
@@ -129,4 +133,9 @@ export const STATUS_COLORS: Record<string, string> = {
   completed: "#22C55E",
   failed: "#F4505E",
   stopped: "#6b7079",
+  /// Reported by the engine when a session said it was working and then went
+  /// quiet past the staleness window. Deliberately not the `working` colour: it
+  /// is the honest answer to "is this thing still doing something?" and reusing
+  /// working's colour would defeat the whole point.
+  stale: "#6b7079",
 };

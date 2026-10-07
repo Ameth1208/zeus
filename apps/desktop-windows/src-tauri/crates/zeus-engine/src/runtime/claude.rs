@@ -198,6 +198,10 @@ impl AgentRuntimeDriver for ClaudeDriver {
         }
     }
 
+    fn binary_name(&self) -> &'static str {
+        "claude"
+    }
+
     fn detect(&self) -> bool {
         let mut cached = self.detected.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(value) = *cached {

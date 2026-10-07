@@ -367,6 +367,10 @@ impl AgentRuntimeDriver for CodexDriver {
         }
     }
 
+    fn binary_name(&self) -> &'static str {
+        "codex"
+    }
+
     fn detect(&self) -> bool {
         let mut cached = self.detected.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(value) = *cached {
@@ -553,10 +557,7 @@ pub fn codex_normalize(raw: &Value, ctx: &NormalizeCtx) -> Vec<ZeusEvent> {
         }
         "error" => {
             let message = params["message"].as_str().unwrap_or("codex error");
-            vec![
-                base(EventKind::SessionFailed)
-                    .with_text(&crate::event::truncate(message, 300)),
-            ]
+            vec![base(EventKind::SessionFailed).with_text(&crate::event::truncate(message, 300))]
         }
         "item/commandExecution/requestApproval"
         | "item/fileChange/requestApproval"
@@ -568,7 +569,10 @@ pub fn codex_normalize(raw: &Value, ctx: &NormalizeCtx) -> Vec<ZeusEvent> {
                 event = event.with_field("rpc_id", json!(id));
             }
             event = event
-                .with_field("request_id", json!(format!("codex-{}", uuid::Uuid::new_v4())))
+                .with_field(
+                    "request_id",
+                    json!(format!("codex-{}", uuid::Uuid::new_v4())),
+                )
                 .with_text(&approval_summary(method, &params));
             vec![event]
         }
@@ -579,7 +583,10 @@ pub fn codex_normalize(raw: &Value, ctx: &NormalizeCtx) -> Vec<ZeusEvent> {
                 event = event.with_field("rpc_id", json!(id));
             }
             event = event
-                .with_field("request_id", json!(format!("codex-{}", uuid::Uuid::new_v4())))
+                .with_field(
+                    "request_id",
+                    json!(format!("codex-{}", uuid::Uuid::new_v4())),
+                )
                 .with_text(&crate::event::truncate(question, 200));
             vec![event]
         }

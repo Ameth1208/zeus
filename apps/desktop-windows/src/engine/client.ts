@@ -70,8 +70,11 @@ export interface RuntimeEntry {
     available: string[];
     installed: boolean;
     version: string | null;
-  } | null;
+  }   | null;
   observed: boolean;
+  /** Whether the CLI exists on this machine, independent of `managed`. A
+   *  runtime can be present and still unlaunchable; the panel needs both facts. */
+  installed: boolean;
 }
 
 export interface ZeusEvent {

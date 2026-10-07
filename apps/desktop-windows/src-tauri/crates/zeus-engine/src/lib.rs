@@ -393,6 +393,8 @@ mod tests {
             message: String::new(),
             tool: String::new(),
             path: String::new(),
+            line: 0,
+            change: String::new(),
             command: String::new(),
             metadata: None,
             seq: Some(seq as u64),

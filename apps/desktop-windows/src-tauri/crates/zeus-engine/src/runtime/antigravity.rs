@@ -297,8 +297,7 @@ pub fn agy_normalize(raw: &Value, ctx: &NormalizeCtx, proc: Option<&AgyProc>) ->
                 .or_else(|| raw["message"].as_str())
                 .unwrap_or("agy error");
             out.push(
-                make(EventKind::SessionFailed)
-                    .with_text(&crate::event::truncate(message, 300)),
+                make(EventKind::SessionFailed).with_text(&crate::event::truncate(message, 300)),
             );
         }
         _ => {}
@@ -334,6 +333,10 @@ impl AgentRuntimeDriver for AntigravityDriver {
             installed: self.detect(),
             version: None,
         }
+    }
+
+    fn binary_name(&self) -> &'static str {
+        "agy"
     }
 
     fn detect(&self) -> bool {

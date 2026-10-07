@@ -18,6 +18,9 @@ import { renderMediaView } from "./views/media";
 import { renderSettingsView } from "./views/settings";
 
 export { ViewData, can, esc, fmtTokens } from "./views/state";
+export { refocusIfIdle } from "./views/overview";
+export { currentTouchedFile, isSessionActive } from "./views/working";
+export { renderWorkPanel } from "./views/working";
 export { renderHeader } from "./views/header";
 export { renderCompactContent } from "./views/compact";
 
