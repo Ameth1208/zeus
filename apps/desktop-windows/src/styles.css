@@ -22,10 +22,19 @@
      depth comes from the top sheen and the drop shadow rather than from blur:
      a backdrop-filter only smears whatever desktop happens to be behind it,
      which reads as muddy rather than as glass. */
-  --glass-fill: #13161d;
-  --glass-edge: rgba(255, 255, 255, 0.1);
-  --glass-highlight: rgba(255, 255, 255, 0.07);
-  --glass-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
+  --glass-fill: #000000;
+  /* Pure black, not a dark blue-grey. The reference for this material is
+     Apple's, and Apple's is #000 — an OLED black that lets the panel sit on
+     the desktop as a hole rather than as a tinted panel. A near-black with a
+     blue cast (#13161d) reads as a *different material* over a dark
+     wallpaper, which is the opposite of the intended effect. */
+  /* The edge is one line, not two. The panel is pure black, so every white
+     alpha stacked at the boundary is separately visible: a 0.11 border plus an
+     0.08 inset highlight plus the sheen's own first stop produced three
+     distinct lines down each side. One hairline carries the silhouette; the
+     shadow only grounds the bottom edge. */
+  --glass-edge: rgba(255, 255, 255, 0.09);
+  --glass-shadow: 0 6px 16px rgba(0, 0, 0, 0.6);
   --red: #f4505e;
   --red-text: #ff8d97;
   --green: #22c55e;
@@ -81,9 +90,7 @@ body {
   border: 1px solid var(--glass-edge);
   border-top: none;
   border-radius: 0 0 14px 14px;
-  box-shadow:
-    inset 0 1px 0 var(--glass-highlight),
-    var(--glass-shadow);
+  box-shadow: var(--glass-shadow);
   overflow: visible;
   will-change: width, height, transform;
 }
@@ -95,11 +102,13 @@ body {
   position: absolute;
   inset: 0;
   border-radius: inherit;
+  /* Falls off within 12% instead of 26%, so the sheen lights only the top
+     edge. At the old spread it wrapped far enough down the sides to read as a
+     second line parallel to the border on a black panel. */
   background: linear-gradient(
     180deg,
-    rgba(255, 255, 255, 0.055) 0%,
-    rgba(255, 255, 255, 0.012) 26%,
-    transparent 52%
+    rgba(255, 255, 255, 0.04) 0%,
+    transparent 12%
   );
   pointer-events: none;
 }
@@ -219,14 +228,49 @@ body {
   flex: 0 0 34px;
   display: flex;
   align-items: center;
+  /* The header pulls 10px past the content padding on each side so its rules
+     and the tab cluster reach the panel edges. The overflow menu anchors here
+     rather than to #island, so it lines up under its own button even while the
+     island is mid-resize. */
+  position: relative;
   margin: 0 -10px;
   transition: opacity 0.2s ease-in-out;
+}
+
+/* Who is this and what is it doing. Sits between the panel edge and the tabs
+   so it reads as the island's own state rather than as one more control, and it
+   takes the slack space: the name is fixed, the state word grows, and the tabs
+   stay pinned right next to it. */
+/* Centred between the tab cluster and the header actions rather than pushed to
+   the left edge. The tabs are the navigation and the actions are the settings,
+   so the island's own name and state belong to neither group: in the gap they
+   read as the window's identity, which is what the user asked to see at a
+   glance. `auto` margins absorb whatever width the two flex siblings use, so
+   this stays centred when the state word is "Idle" and when it is
+   "Disconnected" without any per-state measurement. */
+/* The island's name, alone. State is carried by the mascot's frame and by the
+   views themselves — a word next to the name restated what the drawing already
+   said, in text that had to be styled and re-tuned every time a state was
+   added. Centred in the gap between the tabs and the overflow button. */
+.identity {
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+  margin: 0 auto;
+  white-space: nowrap;
+}
+
+.identity-name {
+  font: 600 12px var(--font);
+  color: var(--ink);
+  letter-spacing: 0.01em;
 }
 
 .tabs {
   display: flex;
   gap: 6px;
-  padding-left: 14px;
+  padding-left: 16px;
+  flex: 0 0 auto;
 }
 
 .tab {
@@ -281,11 +325,11 @@ body {
 }
 
 .header-actions {
-  margin-left: auto;
   display: flex;
   align-items: center;
   gap: 12px;
   padding-right: 16px;
+  flex: 0 0 auto;
 }
 
 /* Same affordance as .tab: the settings and sound controls are buttons too, and
@@ -302,6 +346,69 @@ body {
   height: 26px;
   border-radius: 13px;
   transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+/* Overflow menu. Opens downward from the ellipsis, above the views rather than
+   over them: the content cross-fade is already 160/300ms and stacking an
+   opaque panel on top would fight it. Its own hairline and a deeper fill are
+   what separate it from the island behind it. */
+/* Anchored to #header and offset by the header's own negative margin, so the
+   menu's right edge lines up with the button that opened it. Dropping below
+   the header rather than beside it keeps the right-hand column free, which is
+   the side the pointer is on. */
+.overflow-menu {
+  position: absolute;
+  top: 32px;
+  right: 6px;
+  z-index: 30;
+  min-width: 168px;
+  padding: 5px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  /* Near-black rather than #14161c. The island behind it is pure black, so a
+     lighter menu reads as a separate surface pasted on top; this keeps it
+     darker than the panel's own cards while staying just light enough that its
+     hairline and the two-separator rule are both visible against the island. */
+  background: #0b0c0f;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.6);
+}
+
+.overflow-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink-2);
+  font: 400 11.5px var(--font);
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.13s ease-out, color 0.13s ease-out;
+}
+
+.overflow-item svg {
+  flex: 0 0 auto;
+  color: var(--dim-2);
+}
+
+.overflow-item:hover {
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--ink);
+}
+
+.overflow-item.danger { color: var(--red-text); }
+.overflow-item.danger svg { color: var(--red-text); }
+.overflow-item.danger:hover { background: rgba(244, 80, 94, 0.12); }
+
+.overflow-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: rgba(255, 255, 255, 0.07);
 }
 
 .header-actions button:hover {
@@ -1486,19 +1593,48 @@ input:focus, textarea:focus {
 }
 
 /* Settings view styles */
+/* Settings has no mascot, so it uses the full island width. The scroll
+   wrapper is what lets the card grow past this height instead of squashing
+   every row when a runtime list gets long. */
 .settings-container {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 8px 18px 8px 116px;
   height: 100%;
-  justify-content: center;
+  padding: 0;
 }
+
+.settings-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 14px 18px 16px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
+}
+
+.settings-scroll::-webkit-scrollbar { width: 6px; }
+.settings-scroll::-webkit-scrollbar-track { background: transparent; }
+.settings-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 3px;
+}
+.settings-scroll::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.2); }
 
 .settings-section {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+/* Section hint. Every setting group gets one line saying what the group is
+   for, because a labelled switch on an island panel is not self-describing
+   once the panel is 300px tall. */
+.settings-hint {
+  font: 400 10.5px/1.45 var(--font);
+  color: var(--dim-3);
 }
 
 .settings-label {
@@ -1507,6 +1643,12 @@ input:focus, textarea:focus {
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
+
+/* The runtime row states, not decoration: a missing CLI and a watchable one
+   look different at a glance, which is the whole point of the section. */
+.runtime-missing { opacity: 0.5; }
+.runtime-ready { border-color: rgba(34, 197, 94, 0.22); }
+.runtime-observe { border-color: rgba(255, 255, 255, 0.06); }
 
 .settings-field-row {
   display: flex;
@@ -1575,42 +1717,147 @@ input:focus, textarea:focus {
   height: 100%;
 }
 
+/* Launcher: runtime choice, then the task, then the path and the button.
+   The order is the argument of the view — what to run, what to tell it, where
+   to run it — so nothing else goes above the task field. */
 .launcher-body {
   height: 100%;
-  padding: 10px 18px 12px 100px;
+  padding: 12px 16px 14px 100px;
   display: flex;
   flex-direction: column;
-  justify-content: center;
-  gap: 9px;
+  gap: 10px;
 }
 
 .launcher-heading {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: 8px;
-}
-
-.launcher-heading > div {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.launcher-heading b {
+  flex: 0 0 auto;
   font: 600 12px var(--font);
+  color: var(--ink-2);
 }
 
-.launcher-heading span,
+/* Secondary line states what pressing Launch will actually do, so the button
+   is never a guess about which runtime is armed. */
+.launcher-heading-sub {
+  font: 400 10.5px var(--font);
+  color: var(--dim-3);
+  letter-spacing: 0;
+}
+
 .launcher-empty,
 .activity-composer-note {
   font: 400 10.5px var(--font);
   color: var(--dim-3);
 }
 
+.launcher-empty { line-height: 1.45; }
+
 .launcher-grid {
   display: grid;
   grid-template-columns: 150px minmax(0, 1fr);
   gap: 8px;
+}
+
+/* The task is the largest thing in the view on purpose. It is the only field
+   whose contents the user cannot see once the agent starts, so it gets the
+   most room and the most legible type. */
+.launcher-task {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.launcher-task-label,
+.launcher-field-label {
+  font: 500 9.5px var(--font);
+  color: var(--dim-2);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.launcher-task-input {
+  flex: 1 1 auto;
+  min-height: 62px;
+  resize: none;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: var(--card-flat);
+  color: var(--ink);
+  font: 400 12px/1.45 var(--font);
+  outline: none;
+  transition: border-color 0.15s ease-out;
+}
+
+.launcher-task-input:focus { border-color: rgba(59, 130, 246, 0.42); }
+
+.launcher-task-input::placeholder { color: var(--dim-3); }
+
+.launcher-run {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.launcher-field {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+/* Path field plus the browse button as one control: the button sits flush
+   inside the field's right edge so it reads as part of the input rather than as
+   a separate button beside it. */
+.launcher-cwd-row {
+  display: flex;
+  align-items: stretch;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  background: var(--card-flat);
+  overflow: hidden;
+  transition: border-color 0.15s ease-out;
+}
+
+.launcher-cwd-row:focus-within { border-color: rgba(59, 130, 246, 0.42); }
+
+.launcher-cwd {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 29px;
+  padding: 0 9px;
+  border: 0;
+  background: transparent;
+  font: 400 11px var(--mono);
+}
+
+.launcher-browse {
+  flex: 0 0 auto;
+  width: 30px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-left: 1px solid var(--hairline);
+  background: transparent;
+  color: var(--dim-2);
+  cursor: pointer;
+  transition: background 0.13s ease-out, color 0.13s ease-out;
+}
+
+.launcher-browse:hover { background: rgba(255, 255, 255, 0.07); color: var(--ink); }
+.launcher-browse:active { background: rgba(255, 255, 255, 0.04); }
+
+.launcher-launch {
+  flex: 0 0 auto;
+  height: 29px;
+  padding: 0 16px;
+  border-radius: 8px;
+  font-size: 11.5px;
 }
 
 .launcher-grid label {
@@ -1634,10 +1881,6 @@ input:focus, textarea:focus {
   font: 400 11px var(--mono);
 }
 
-.launcher-prompt {
-  padding: 4px 5px 4px 9px;
-}
-
 .inline-error {
   color: var(--red-text);
   font: 500 10px/1.3 var(--font);
@@ -1653,19 +1896,110 @@ input:focus, textarea:focus {
   background: rgba(59, 130, 246, 0.08);
 }
 
+/* ── Agent Activity (prompt view) ────────────────────────────────────
+   The feed is the point of this view: what the agent did, in order, one
+   glance. Three rules keep it honest:
+     * the header is a fixed rail, so the list scrolls under a stable title
+       instead of the title scrolling away with the first event;
+     * rows share one left edge for the dots, so the eye can track a single
+       column of state down the list instead of re-finding it per row;
+     * the kind name is the only bold thing on the row. Everything else is
+       dimmed, because the question is always "what kind of thing" first
+       and "what exactly" second. */
 .activity-feed-container {
-  gap: 6px;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  gap: 0;
+  padding: 0;
 }
 
+.activity-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  flex: 0 0 auto;
+  padding: 9px 12px 8px;
+  border-bottom: 1px solid var(--hairline);
+  background: rgba(255, 255, 255, 0.02);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink-2);
+  letter-spacing: 0.01em;
+  /* The counts are secondary. They must not win the baseline against the
+     title, or the header reads as a dashboard instead of a label. */
+  white-space: nowrap;
+}
+
+.activity-header > span:last-child {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+}
+
+.activity-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 4px 6px 4px;
+  /* Fade the last row rather than letting it shear against the composer. */
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 12px), transparent 100%);
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
+}
+
+.activity-list::-webkit-scrollbar { width: 6px; }
+.activity-list::-webkit-scrollbar-track { background: transparent; }
+.activity-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 3px;
+}
+.activity-list::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.2); }
+
+.activity-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: 10px;
+  color: var(--dim-3);
+  font-size: 11px;
+}
+
+/* Rows: a hairline between entries, the way a terminal separates lines, so a
+   dense feed stays countable. Hover lifts one row without shifting layout. */
+.act-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.035);
+  transition: background 0.14s ease-out;
+}
+
+.activity-list .act-row:last-child { border-bottom: 0; }
+
+/* The composer is pinned to the bottom edge, so it reads as the thing you
+   type into rather than as the last row of the feed. The hairline above it is
+   what separates input from output — without it the input sits in the log. */
 .activity-composer {
   flex: 0 0 auto;
-  margin-top: 2px;
-  padding: 4px 5px 4px 9px;
+  margin: 0;
+  padding: 7px 10px 9px;
+  border-top: 1px solid var(--hairline);
+  background: rgba(255, 255, 255, 0.02);
 }
 
 .activity-composer-note {
   flex: 0 0 auto;
-  padding: 4px 8px 0;
+  padding: 9px 12px;
+  border-top: 1px solid var(--hairline);
+  color: var(--dim-3);
+  font-size: 10.5px;
+  text-align: center;
 }
 
 button:disabled,
@@ -1720,20 +2054,28 @@ input:disabled {
 }
 .compact-text b { font-weight: 600; }
 
+/* Idle: a quiet ring. This is the only dot on the panel that used to be a
+   saturated blue, which made "nothing is happening" the brightest thing in the
+   bar. */
 .compact-dot-blue {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #3B82F6;
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--dim-4);
 }
 
+/* Working. A breathing ring rather than a filled dot with a glow: on a black
+   slab a luminous dot is the only saturated thing left on the panel, and it
+   reads as a light source instead of as a state. The ring breathes by scaling
+   and fading, which survives at 7px where a colour shift would not. */
 .compact-dot-working {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #3B82F6;
-  box-shadow: 0 0 6px #3B82F6;
-  animation: pulse-dot 1.4s ease-in-out infinite;
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--ink-2);
+  animation: pulse-dot 1.6s ease-in-out infinite;
 }
 
 .compact-idle-label {
@@ -1757,12 +2099,15 @@ input:disabled {
   border-radius: 10px;
   cursor: pointer;
 }
-.compact-btn.approve { background: #3B82F6; color: #fff; }
-.compact-btn.deny { background: rgba(255,255,255,0.08); color: #E2E5EA; }
+/* Both keys the same weight: the compact bar is 36px tall and the difference
+   between "allow" and "deny" has to be legibility, not one solid pill against
+   one outline. Allow is the ink fill so it reads as the default action. */
+.compact-btn.approve { background: var(--ink); color: #0b0c0e; }
+.compact-btn.deny { background: transparent; color: var(--dim-2); border: 1px solid rgba(255,255,255,0.12); }
 
 @keyframes pulse-dot {
   0%, 100% { transform: scale(1); opacity: 1; }
-  50% { transform: scale(1.25); opacity: 0.7; }
+  50% { transform: scale(0.72); opacity: 0.55; }
 }
 
 
@@ -2003,11 +2348,15 @@ input:disabled {
   transition-delay: 0.12s;
 }
 
-/* A card is a solid container. It should never rely on compromised colours. */
+/* A card is a solid container. It should never rely on compromised colours.
+   The wash is white, not the old dark tint: on a black slab a dark overlay is
+   invisible, so the card lost the only thing that separated it from the panel
+   behind it. A faint white lift reads as a raised surface on black, which is
+   the same relationship the card had over the lighter fill. */
 .card {
   position: absolute;
   inset: 0;
-  background: rgba(20, 21, 24, 0.03);
+  background: rgba(255, 255, 255, 0.028);
   border-radius: 22px;
   border-top: 1px solid rgba(255, 255, 255, 0.05);
   overflow: hidden;
@@ -2016,6 +2365,14 @@ input:disabled {
 /* Views that show the mascot on the left must not let content touch it. */
 .card.has-mascot > .stack,
 .card.has-mascot > .approval-body {
+  padding-left: 136px;
+}
+
+/* The prompt view keeps the feed full-bleed and indents its contents instead
+   of padding the container, so the header rule and the composer rule still
+   span the whole island and the mascot gutter reads as one column of empty
+   panel rather than as a broken edge on each row. */
+.card.has-mascot > .activity-feed-container > * {
   padding-left: 136px;
 }
 
@@ -2049,48 +2406,28 @@ input:disabled {
 
 /* ── Media view ─────────────────────────────────────────────────────────── */
 
+/* Three columns, each sized by its own content: fixed art, flexible
+   description, fixed transport. No `space-between` — that stretched the gap
+   between art and text when a track name was short, so the block drifted apart
+   instead of staying together. */
 .media-body {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 14px;
+  gap: 16px;
   height: 100%;
-  padding: 14px 18px;
-}
-
-.media-left {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-}
-
-.media-track {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  min-width: 0;
-}
-
-.media-note {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 40px;
-  height: 40px;
-  flex: 0 0 auto;
-  border-radius: 12px;
-  color: var(--cyan);
-  background: rgba(34, 211, 238, 0.1);
-  border: 1px solid rgba(34, 211, 238, 0.18);
+  padding: 16px 18px;
 }
 
 .media-text { min-width: 0; }
 
+/* The track is the loudest thing on the panel while it plays, and the artist
+   deliberately sits under it in the dimmer tone rather than in white: two
+   equally bright lines compete, and the title is what the eye should land on
+   first. */
 .media-title {
   font-size: 13px;
   font-weight: 600;
+  letter-spacing: 0.005em;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2112,6 +2449,10 @@ input:disabled {
   flex: 0 0 auto;
 }
 
+/* Transport buttons: a hairline and a faint fill, so the play/pause key is the
+   only solid shape and the two skip keys stay secondary. Borders use the same
+   0.09 as the panel edge, so every outline on the island reads at one weight
+   instead of the button frames looking heavier than the slab they sit on. */
 .media-btn {
   display: grid;
   place-items: center;
@@ -2119,13 +2460,17 @@ input:disabled {
   height: 36px;
   border-radius: 50%;
   border: 1px solid rgba(255, 255, 255, 0.09);
-  background: rgba(255, 255, 255, 0.06);
-  color: var(--ink);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--ink-2);
   cursor: pointer;
-  transition: background 0.15s, transform 0.08s ease-out;
+  transition: background 0.15s, color 0.15s, transform 0.08s ease-out;
 }
 
-.media-btn:hover:not(:disabled) { background: rgba(255, 255, 255, 0.12); }
+.media-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.11);
+  color: var(--ink);
+}
+
 .media-btn:active:not(:disabled) { transform: scale(0.94); }
 .media-btn:disabled { opacity: 0.4; cursor: default; }
 
@@ -2137,9 +2482,20 @@ input:disabled {
   border-color: transparent;
 }
 
-.media-btn.primary:hover:not(:disabled) { background: #ffffff; }
+/* The generic hover rule above sets `color: var(--ink)`, which is near-white,
+   and it outranks `.media-btn.primary`'s dark glyph: (0,3,0) against (0,2,0).
+   On hover the fill also goes white, so the glyph and its button disappeared
+   into each other. The primary key has to restate its own colour. */
+.media-btn.primary:hover:not(:disabled) {
+  background: #ffffff;
+  color: #0b0c0e;
+}
 
 /* Compact working pulse — the only always-on ambient signal in the bar. */
+/* The compact bar's "an agent is alive" signal. A ring that breathes in place,
+   with no expanding halo and no hue: the halo was the only glow left on the
+   panel, and it drew more attention than the agent it was reporting on. The
+   breathing alone carries "working" — a static ring reads as parked. */
 .compact-pulse {
   position: relative;
   width: 7px;
@@ -2147,29 +2503,26 @@ input:disabled {
   margin-left: 9px;
   flex: 0 0 auto;
   border-radius: 50%;
-  background: #3B82F6;
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--ink);
+  animation: compact-breathe 1.6s ease-in-out infinite;
 }
 
-.compact-pulse::after {
-  content: "";
-  position: absolute;
-  inset: -4px;
-  border-radius: 50%;
-  border: 1.5px solid rgba(59, 130, 246, 0.55);
-  animation: compact-ping 1.6s cubic-bezier(0, 0, 0.2, 1) infinite;
+@keyframes compact-breathe {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(0.72); opacity: 0.55; }
 }
 
-@keyframes compact-ping {
-  0% { transform: scale(0.6); opacity: 1; }
-  75%, 100% { transform: scale(1.5); opacity: 0; }
-}
-
+/* The "N working" badge in the compact bar. A hairline pill in the dim tone:
+   it is a count, not an alert, and the old blue fill put the only saturated
+   colour in the bar directly beside the mascot. */
 .compact-count {
   margin-right: 8px;
   padding: 1px 6px;
   border-radius: 8px;
-  background: rgba(59, 130, 246, 0.18);
-  color: #93c5fd;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--dim-2);
   font-size: 10px;
   font-weight: 700;
   flex: 0 0 auto;
@@ -2184,12 +2537,14 @@ input:disabled {
   letter-spacing: 0.01em;
 }
 
-/* Media progress bar. */
+/* The bar belongs to the text column, not to the whole panel, so it sits
+   directly under the title and shares its left edge. Centring it across the
+   island would imply it describes the panel; it describes the track. */
 .media-progress {
-  margin-top: 10px;
+  margin-top: 9px;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 9px;
 }
 
 .media-progress-track {
@@ -2197,15 +2552,17 @@ input:disabled {
   flex: 1;
   height: 3px;
   border-radius: 2px;
-  background: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.1);
   overflow: hidden;
 }
 
+/* Dimmer than the type: the elapsed time is context, the fill is the state.
+   Pure white on both would flatten them into one line of noise. */
 .media-progress-fill {
   position: absolute;
   inset: 0 auto 0 0;
   border-radius: 2px;
-  background: var(--ink);
+  background: rgba(245, 246, 248, 0.62);
 }
 
 /* Between polls (4s), a live track keeps advancing smoothly. */
@@ -2213,21 +2570,17 @@ input:disabled {
   transition: width 4s linear;
 }
 
+/* Both timestamps are fixed-width in effect: tabular figures stop the elapsed
+   time from shifting the track by a digit as it counts up. */
 .media-progress-time {
   font-size: 9.5px;
   color: var(--dim-3);
   font-variant-numeric: tabular-nums;
   flex: 0 0 auto;
+  min-width: 30px;
 }
 
-.media-cover {
-  width: 44px;
-  height: 44px;
-  border-radius: 10px;
-  object-fit: cover;
-  flex: 0 0 auto;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
-}
+.media-progress-time:last-child { text-align: right; }
 
 /* ── Home redesign ──────────────────────────────────────────────────────── */
 
@@ -2315,34 +2668,40 @@ input:disabled {
 .empty-agent:active { transform: scale(0.96); }
 .empty-agent svg { width: 20px; height: 20px; }
 
-/* Activity rows. */
-.act-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  padding: 5px 10px;
-  border-radius: 8px;
-}
+.act-row:hover { background: rgba(255, 255, 255, 0.045); }
 
-.act-row:hover { background: rgba(255, 255, 255, 0.04); }
-
+/* The dot is the only place a row's colour lives, so it sits on a fixed
+   column: rings rather than fills keep the family readable at 6px, where a
+   solid dot of two similar blues would be indistinguishable. */
 .act-dot {
-  width: 6px;
-  height: 6px;
-  margin-top: 5px;
+  width: 7px;
+  height: 7px;
+  margin-top: 4px;
   border-radius: 50%;
   flex: 0 0 auto;
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px currentColor;
 }
 
-.act-body { min-width: 0; }
+.act-body { min-width: 0; flex: 1 1 auto; }
 
 .act-title {
   font-size: 11px;
   font-weight: 600;
   color: var(--ink-2);
+  /* Event kinds are dotted.case names from the engine. Showing the raw token
+     wastes the row's most legible line; the family is what a person reads. */
+  text-transform: capitalize;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.act-title .act-who { color: var(--dim-2); font-weight: 500; }
+.act-title .act-who {
+  color: var(--dim-3);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
 
 .act-detail {
   font-size: 10.5px;
@@ -2350,4 +2709,55 @@ input:disabled {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Player layout: cover left, centered column with text / transport / bar. */
+/* 104px in a 188px-tall view leaves 42px of air above and below, so the art
+   reads as a deliberate tile rather than as a crop filling the card. The inner
+   hairline is what separates light album covers from the black panel; a shadow
+   alone cannot do it against a dark background. */
+.media-cover-lg {
+  width: 104px;
+  height: 104px;
+  border-radius: 14px;
+  object-fit: cover;
+  flex: 0 0 auto;
+  align-self: center;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.45);
+}
+
+/* Same 104px box as the cover, so swapping a track in and out of the tile
+   position never reflows the row. The tinted fill matches the cover's hairline
+   weight so the two states are visibly the same object. */
+/* Neutral, not cyan. This is the tile a source shows when it publishes no
+   artwork, so it stands in for a photograph — giving it a hue of its own made
+   it the only coloured object left on the panel and it pulled the eye away from
+   the title. A lifted black plus the same hairline as the cover keeps it reading
+   as "no image here" rather than as a design decision. */
+.media-note-lg {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 104px;
+  height: 104px;
+  border-radius: 14px;
+  flex: 0 0 auto;
+  align-self: center;
+  color: var(--dim-3);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+}
+
+/* Replaces the previous centre-aligned `.media-main`. The description column is
+   left-aligned and carries the progress bar, matching the artwork above it and
+   the transport beside it: one left edge for the two text lines, and the bar
+   closing that block instead of floating under the buttons. */
+.media-info {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 10px;
 }

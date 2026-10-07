@@ -30,6 +30,7 @@ export const ICONS = {
   xmark: lc("xmark"),
   timer: lc("timer"),
   ellipsis: lc("ellipsis"),
+  folderOpen: lc("folderOpen"),
   star: lc("star"),
   terminal: lc("terminal"),
   bolt: lc("bolt"),

@@ -45,18 +45,34 @@ export const WAKE_STRIP_H = 12;
 // Heights measured against real content: a view that shows buttons must have
 // room for them plus breathing space. A view too short squeezes text over the
 // mascot; too tall floats the island in empty wash.
+// The mascot carries the state in every view, so it gets the size budget the
+// content can spare. Diameters grew ~20% over the previous pass because at
+// 46-58px the frames lost their silhouettes at island scale and the panel read
+// as empty space with a small drawing in it. Each value stays inside
+// `botX + diameter/2 + BOT_GUTTER_MARGIN` so no layout ever overlaps content.
 export const VIEW_LAYOUTS: Record<IslandViewName, ViewLayout> = {
-  overview: { height: 176, botX: 68, botY: null, botDiameter: 58, agentMode: "pills", wash: null },
-  empty: { height: 168, botX: 70, botY: null, botDiameter: 62, agentMode: "none", wash: null },
+  overview: { height: 176, botX: 74, botY: null, botDiameter: 72, agentMode: "pills", wash: null },
+  empty: { height: 168, botX: 76, botY: null, botDiameter: 76, agentMode: "none", wash: null },
   // Approval carries two buttons and a command line; give it the most room.
-  approval: { height: 204, botX: 62, botY: null, botDiameter: 56, agentMode: "column", wash: "rgba(245,165,36,0.38)" },
-  question: { height: 200, botX: 62, botY: null, botDiameter: 56, agentMode: "column", wash: "rgba(34,211,238,0.32)" },
-  error: { height: 176, botX: 62, botY: null, botDiameter: 58, agentMode: "column", wash: "rgba(244,80,94,0.45)" },
-  finished: { height: 168, botX: 62, botY: null, botDiameter: 58, agentMode: "column", wash: "rgba(34,197,94,0.4)" },
-  launcher: { height: 272, botX: 54, botY: 152, botDiameter: 46, agentMode: "column", wash: null },
-  prompt: { height: 205, botX: 54, botY: null, botDiameter: 46, agentMode: "column", wash: null },
-  media: { height: 168, botX: 62, botY: null, botDiameter: 52, agentMode: "none", wash: null },
-  settings: { height: 300, botX: 60, botY: 80, botDiameter: 0, agentMode: "none", wash: null },
+  approval: { height: 204, botX: 70, botY: null, botDiameter: 70, agentMode: "column", wash: "rgba(245,165,36,0.38)" },
+  question: { height: 200, botX: 70, botY: null, botDiameter: 70, agentMode: "column", wash: "rgba(34,211,238,0.32)" },
+  error: { height: 176, botX: 70, botY: null, botDiameter: 72, agentMode: "column", wash: "rgba(244,80,94,0.45)" },
+  finished: { height: 168, botX: 70, botY: null, botDiameter: 72, agentMode: "column", wash: "rgba(34,197,94,0.4)" },
+  // The launcher carries a four-line task field plus a path row, so it needs
+  // materially more height than it used to. The mascot sits low and left,
+  // beside the task field rather than above it.
+  launcher: { height: 356, botX: 58, botY: 236, botDiameter: 60, agentMode: "column", wash: null },
+  prompt: { height: 205, botX: 62, botY: null, botDiameter: 60, agentMode: "column", wash: null },
+  // The player is a control surface, not a mascot view. Zeus keeps an eye on
+  // the session in the background, but putting the dog in here put it straight
+  // on top of the album art and smeared its glow over the cover. `botDiameter:
+  // 0` hides it and hands the whole island width to the transport.
+  media: { height: 188, botX: 0, botY: null, botDiameter: 0, agentMode: "none", wash: null },
+  // Settings grew from 300 to 400: each section now carries a one-line hint
+  // and the runtime rows state their capabilities inline instead of hiding
+  // them in a tooltip, which is about four lines taller per group. It scrolls
+  // rather than clipping, so a long runtime list cannot push Save off-screen.
+  settings: { height: 400, botX: 0, botY: null, botDiameter: 0, agentMode: "none", wash: null },
 };
 
 /// The header + mascot gutter every expanded view shares. Total height is this

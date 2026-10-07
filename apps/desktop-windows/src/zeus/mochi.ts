@@ -8,7 +8,6 @@ import { BOT_STATES, type ZeusBotState } from "./frames";
 
 const K_GEN = 0.11;
 const K_LOOK = 0.16;
-const K_COLOR = 0.18;
 
 interface Frame {
   image: HTMLImageElement;
@@ -42,9 +41,6 @@ export class Mochi {
   private scale = 1;
   private offsetY = 0;
   private rotate = 0;
-  private glowR = 0x3b;
-  private glowG = 0x9e;
-  private glowB = 0xff;
 
   private mouseX = -1000;
   private mouseY = -1000;
@@ -416,10 +412,16 @@ export class Mochi {
     this.offsetY = smooth(this.offsetY, targetOffsetY, K_GEN, dt);
     this.rotate = smooth(this.rotate, targetRotate, K_GEN, dt);
 
-    const [r, gg, b] = hexToRgb(cfg.color);
-    this.glowR = smooth(this.glowR, r, K_COLOR, dt);
-    this.glowG = smooth(this.glowG, gg, K_COLOR, dt);
-    this.glowB = smooth(this.glowB, b, K_COLOR, dt);
+    // The badge used to be a coloured disc drawn out past the silhouette at
+    // (0.38, -0.34) of the diameter. On a black panel it no longer read as part
+    // of the character — it looked like a floating dot hovering over the dog's
+    // head, which is exactly what it was: a separate object at a separate
+    // position. State is carried by the frame itself plus the label in the
+    // header, so the canvas draws no overlay.
+    //
+    // The shadow is black, so the per-state colour no longer has a use here.
+    // `cfg.color` still drives the badge and the ring at the call site; this
+    // smooth was only ever feeding the tinted halo, which is gone.
 
     // Update particles
     for (let i = this.particles.length - 1; i >= 0; i--) {
@@ -519,16 +521,31 @@ export class Mochi {
     ctx.save();
     ctx.translate(cx, cy);
 
-    // ── Halo: luminous aura behind Zeus ────────────────────────────────
-    const gr = Math.round(this.glowR);
-    const gc = Math.round(this.glowG);
-    const gb = Math.round(this.glowB);
-    const haloRadius = diameter * 0.72;
+    // ── Contact shadow ───────────────────────────────────────────────────
+    // Now the panel itself is black, so a translucent tint behind the mascot
+    // has nothing to be a tint *against*: it reads as a separate coloured blob
+    // floating over the silhouette rather than as depth behind it. A shadow's
+    // job is to darken what is already there, and here there is nothing left to
+    // darken. Drawn in black instead — and only below centre — it grounds the
+    // silhouette by putting a soft edge against the eyes and rim light without
+    // ever adding a hue of its own.
+    const haloRadius = diameter * 0.62;
 
-    const g = ctx.createRadialGradient(0, 0, diameter * 0.12, 0, 0, haloRadius);
-    g.addColorStop(0, `rgba(${gr},${gc},${gb},${cfg.glow * 0.85})`);
-    g.addColorStop(0.5, `rgba(${gr},${gc},${gb},${cfg.glow * 0.35})`);
-    g.addColorStop(1, `rgba(${gr},${gc},${gb},0)`);
+    // The gap between the inner and outer radius is the blur. At 0.2 → 0.42 the
+    // ramp was narrow enough to read as a hard ring hugging the dog. Widening
+    // it to 0.08 → 0.62 spreads the same alpha over most of the disc, so the
+    // falloff is gradual and there is no edge to see.
+    const g = ctx.createRadialGradient(
+      0,
+      diameter * 0.1,
+      diameter * 0.08,
+      0,
+      diameter * 0.1,
+      haloRadius,
+    );
+    g.addColorStop(0, `rgba(0,0,0,${cfg.glow})`);
+    g.addColorStop(0.45, `rgba(0,0,0,${cfg.glow * 0.45})`);
+    g.addColorStop(1, "rgba(0,0,0,0)");
 
     ctx.fillStyle = g;
     ctx.beginPath();
@@ -550,9 +567,6 @@ export class Mochi {
 
     // ── Particles ─────────────────────────────────────────────────────
     this.drawParticles(ctx, diameter);
-
-    // ── Badge ─────────────────────────────────────────────────────────
-    this.drawBadge(ctx, cfg.badge, cfg.color, diameter);
 
     ctx.restore();
   }
@@ -612,65 +626,8 @@ export class Mochi {
     ctx.closePath();
     ctx.fill();
   }
-
-  private drawBadge(
-    ctx: CanvasRenderingContext2D,
-    kind: string,
-    color: string,
-    diameter: number,
-  ): void {
-    if (kind === "none") return;
-    const bx = diameter * 0.38;
-    const by = -diameter * 0.34;
-    const r = diameter * 0.14;
-
-    ctx.save();
-    if (kind === "dots") {
-      ctx.fillStyle = color;
-      const phase = (performance.now() / 1000) * 3.4;
-      for (let i = 0; i < 3; i++) {
-        const p = phase - i * 0.28;
-        const bounce = p <= 0 ? 0 : Math.sin(p * Math.PI);
-        ctx.beginPath();
-        ctx.arc(bx - r + i * r * 1.1, by - bounce * r * 0.5, r * 0.26, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      ctx.restore();
-      return;
-    }
-
-    ctx.fillStyle = `${color}2e`;
-    ctx.strokeStyle = `${color}8c`;
-    ctx.lineWidth = 1.2;
-    ctx.beginPath();
-    ctx.arc(bx, by, r, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-
-    ctx.fillStyle = color;
-    ctx.font = `800 ${Math.round(r * 1.25)}px system-ui, sans-serif`;
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    if (kind === "bang") ctx.fillText("!", bx, by + 0.5);
-    else if (kind === "question") ctx.fillText("?", bx, by + 0.5);
-    else {
-      ctx.beginPath();
-      ctx.arc(bx, by, r * 0.3, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    ctx.restore();
-  }
 }
 
 function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t;
-}
-
-function hexToRgb(hex: string): [number, number, number] {
-  const h = hex.replace("#", "");
-  return [
-    parseInt(h.slice(0, 2), 16),
-    parseInt(h.slice(2, 4), 16),
-    parseInt(h.slice(4, 6), 16),
-  ];
 }

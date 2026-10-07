@@ -121,6 +121,10 @@ export class Island {
     this.kick();
   }
 
+  /** The state the mascot is actually drawing, not the one last requested. It
+   *  differs on purpose: poking the dog briefly swaps in `dizzy` or `love` and
+   *  then reverts, and the header label should follow the picture the user is
+   *  looking at rather than flip back while the frame is still on screen. */
   setBotState(state: ZeusBotState): void {
     this.engine.setState(state);
     if (state === "approval") {
@@ -296,7 +300,9 @@ export class Island {
 
     botCanvas.style.transform = `translate(${this.botCx.value}px, ${this.botCy.value}px) translate(-50%, -50%)`;
 
-    // Push bounding rect to Tauri Rust backend for hit testing
+    // Push bounding rect to Tauri Rust backend for hit testing. Only integer
+    // pixel changes go out — the mascot loop keeps this function hot at 60 fps
+    // and an IPC call per sub-pixel wobble is pointless churn.
     const rect = {
       x: Math.round((PANEL_W - w) / 2),
       y: 0,
@@ -305,11 +311,7 @@ export class Island {
     };
 
     const p = this.pushedRect;
-    if (
-      Math.abs(p.x - rect.x) > 0.5 ||
-      Math.abs(p.w - rect.w) > 0.5 ||
-      Math.abs(p.h - rect.h) > 0.5
-    ) {
+    if (p.x !== rect.x || p.w !== rect.w || p.h !== rect.h) {
       this.pushedRect = rect;
       this.deps.onPushRect(rect);
     }

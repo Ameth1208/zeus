@@ -21,7 +21,13 @@ const LUCIDE = {
   bubble: "messages-square",
   plus: "plus",
   gear: "settings",
-  gearFill: "settings",
+  // Deliberately a different glyph, not the same one twice: the settings tab
+  // needs an active and an inactive shape, and lucide ships no filled variant
+  // of `settings`. `cog` is the same concept at a different weight/geometry, so
+  // the active tab reads as a different mark rather than as the identical one
+  // drawn twice — which is what `settings` for both keys produced.
+  gearFill: "cog",
+  folderOpen: "folder-open",
   speakerOn: "volume-2",
   speakerOff: "volume-x",
   arrowUpRight: "arrow-up-right",

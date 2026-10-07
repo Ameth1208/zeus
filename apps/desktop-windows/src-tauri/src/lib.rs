@@ -558,10 +558,8 @@ impl IslandState {
 
 #[tauri::command]
 fn set_island_rect(state: tauri::State<'_, Arc<IslandState>>, rect: IslandRect) {
-    log_line(&format!(
-        "set_island_rect: w={} h={} x={} y={}",
-        rect.w, rect.h, rect.x, rect.y
-    ));
+    // No log here: this fires at frame rate while the island animates, and a
+    // disk append per frame was a real stall source.
     state.push(rect);
 }
 
@@ -748,6 +746,10 @@ pub fn run() {
     let island_state = Arc::new(IslandState::default());
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
+        // Folder picking for the launcher: the working directory is a path the
+        // user has to browse for, and typing it by hand is how a launch ends up
+        // in the wrong tree.
+        .plugin(tauri_plugin_dialog::init())
         .plugin(hotkey_plugin())
         .manage(island_state.clone());
 

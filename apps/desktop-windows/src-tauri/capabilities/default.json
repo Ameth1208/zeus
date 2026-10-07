@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "Default Zeus desktop capability",
   "windows": ["main"],
-  "permissions": ["core:default", "notification:default"]
+  "permissions": ["core:default", "notification:default", "dialog:default"]
 }

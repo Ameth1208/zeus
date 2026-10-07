@@ -14,6 +14,7 @@ import { ViewData, renderHeader, renderViewContent, renderCompactContent } from 
 import { uiStateForSessions, frameFor, describeEvent, type Session } from "./zeus/frames";
 import { Sound } from "./core/sound";
 import * as zeus from "./engine/client";
+import { open } from "@tauri-apps/plugin-dialog";
 
 function diag(msg: string): void {
   void zeus.logDiag(msg);
@@ -72,7 +73,7 @@ diag(`island booted mode=${island.mode} view=${island.view}`);
 function render(): void {
   compactContentEl.innerHTML = renderCompactContent();
   contentEl.innerHTML = `
-    ${renderHeader(island.view, Sound.isEnabled)}
+    ${renderHeader(island.view)}
     <div id="views">
       ${renderViewContent(island.view)}
     </div>`;
@@ -113,6 +114,34 @@ async function refreshGatewayStatus(): Promise<void> {
   ViewData.gatewayState = status.state;
   syncMascotAndTicker();
   render();
+}
+
+/** Opens the native folder picker and remembers the choice for the launcher.
+ *
+ *  The result is written to `localStorage` because the working directory is a
+ *  preference about where this user works, not per-session state: launching a
+ *  second agent should default to the same tree without re-picking it.
+ *
+ *  Re-render is skipped on purpose. `render()` rebuilds the whole header and
+ *  views, which would steal focus from the field mid-edit; the input keeps its
+ *  value because only the model changed, and the caret stays where it was. */
+async function pickWorkingDirectory(): Promise<void> {
+  try {
+    const picked = await open({ directory: true, multiple: false, title: "Where should the agent work?" });
+    if (typeof picked !== "string" || !picked.trim()) return;
+    ViewData.launchCwd = picked;
+    localStorage.setItem("zeus_launch_cwd", picked);
+    const field = document.querySelector<HTMLInputElement>("#launch-cwd");
+    if (field) {
+      field.value = picked;
+      field.focus();
+    }
+    diag(`launch cwd set to ${picked}`);
+  } catch (err) {
+    // A cancelled dialog throws on some platforms and resolves null on others;
+    // both are a non-event, so neither surfaces as an error.
+    diag(`pick cwd failed: ${String(err)}`);
+  }
 }
 
 /** Now-playing only matters while the media view is on screen. */
@@ -264,6 +293,9 @@ document.addEventListener("click", async (e) => {
   if (navBtn) {
     e.stopPropagation();
     Sound.play("blip");
+    // Settings is reachable from the overflow menu, so navigating from there has
+    // to dismiss it or it stays open over the view it just opened.
+    ViewData.menuOpen = false;
     island.setView(navBtn.dataset.nav as "overview" | "launcher" | "prompt" | "media" | "settings");
     if (navBtn.dataset.nav === "media") void refreshMedia();
     void zeus.focusWindow();
@@ -286,11 +318,29 @@ document.addEventListener("click", async (e) => {
       render();
       return;
     }
+    case "pick-cwd": {
+      void pickWorkingDirectory();
+      return;
+    }
+    case "toggle-menu": {
+      ViewData.menuOpen = !ViewData.menuOpen;
+      render();
+      return;
+    }
+    case "force-hide": {
+      ViewData.menuOpen = false;
+      island.hide();
+      render();
+      return;
+    }
     case "toggle-sound":
     case "toggle-sound-switch": {
       const next = !Sound.isEnabled;
       Sound.setEnabled(next);
       ViewData.soundOn = next;
+      // Coming from the overflow menu, the menu closes: the item was an
+      // action, and leaving the panel open underneath it looks like it stuck.
+      if (actBtn.classList.contains("overflow-item")) ViewData.menuOpen = false;
       Sound.play("blip");
       render();
       return;
@@ -315,7 +365,7 @@ document.addEventListener("click", async (e) => {
       ViewData.error = "";
       island.setView("launcher");
       render();
-      window.setTimeout(() => document.querySelector<HTMLInputElement>("#launch-cwd")?.focus(), 0);
+      window.setTimeout(() => document.querySelector<HTMLTextAreaElement>("#launch-prompt")?.focus(), 0);
       return;
     }
     case "open-question": {
@@ -326,11 +376,18 @@ document.addEventListener("click", async (e) => {
       return;
     }
     case "launch-session": {
-      const runtime = document.querySelector<HTMLSelectElement>("#launch-runtime")?.value.trim() ?? "";
+      // The runtime comes from ViewData, not from the DOM. There is no
+      // `#launch-runtime` element — the runtime is picked with a card button
+      // that writes `ViewData.launchRuntime`, so reading a missing select here
+      // always yielded an empty string and every launch failed the guard below
+      // with a message about a field the user cannot even see.
+      const runtime = ViewData.launchRuntime;
       const cwd = document.querySelector<HTMLInputElement>("#launch-cwd")?.value.trim() ?? "";
-      const prompt = document.querySelector<HTMLInputElement>("#launch-prompt")?.value.trim() ?? "";
+      const prompt = document.querySelector<HTMLTextAreaElement>("#launch-prompt")?.value.trim() ?? "";
       if (!runtime || !cwd) {
-        ViewData.error = "Choose an installed runtime and a working folder.";
+        ViewData.error = !runtime
+          ? "Pick a runtime first."
+          : "Set a working folder.";
         render();
         return;
       }
@@ -517,13 +574,23 @@ async function decidePending(allow: boolean): Promise<void> {
 // ── keyboard ──────────────────────────────────────────────────────────────────
 
 window.addEventListener("keydown", (e) => {
-  const activeInput = document.activeElement as HTMLInputElement | null;
-  if (activeInput && activeInput.tagName === "INPUT") {
-    if (e.key === "Enter" && activeInput.id === "launch-prompt") {
+  const activeInput = document.activeElement as HTMLInputElement | HTMLTextAreaElement | null;
+  const tag = activeInput?.tagName;
+
+  // The task field is a textarea, so bare Enter has to keep inserting a
+  // newline — that is what makes it worth having. Launch is on Ctrl+Enter,
+  // the same chord every chat surface uses for "send this".
+  if (activeInput && tag === "TEXTAREA") {
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
       document.querySelector<HTMLElement>('[data-act="launch-session"]')?.click();
       return;
     }
+    if (e.key === "Escape") activeInput.blur();
+    return;
+  }
+
+  if (activeInput && tag === "INPUT") {
     if (e.key === "Enter" && activeInput.id === "session-message") {
       e.preventDefault();
       document.querySelector<HTMLElement>('[data-act="send-message"]')?.click();
@@ -614,3 +681,16 @@ void refresh();
 // A slow heartbeat keeps durations and elapsed counters honest without polling
 // the engine on every animation frame.
 window.setInterval(() => void refresh(), 4000);
+
+// Now-playing has its own heartbeat rather than riding the 4 s engine one.
+// GSMTC publishes a new session the moment the user starts music, which is
+// rarely a multiple of four seconds, and a one-shot read on tab entry left the
+// player stuck on "Nothing playing" until the view was reopened. The interval
+// only lives while the media view is on screen: outside it the player is not
+// rendered, so asking the host every four seconds forever would be cost with
+// nothing to show for it. Aggressive mode is not needed either, because the
+// host caches album art by track identity, so a re-read of an unchanged song
+// is a cached map lookup rather than a decode.
+window.setInterval(() => {
+  if (island.view === "media") void refreshMedia();
+}, 1500);

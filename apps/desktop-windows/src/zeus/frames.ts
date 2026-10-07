@@ -35,16 +35,18 @@ export type ZeusBotState =
   | "dizzy"
   | "love";
 
-export type BadgeKind = "none" | "dots" | "bang" | "question" | "dot";
 
 export interface ZeusStateCfg {
   /** Frame from assets/zeus/, normalised by tools/normalize_zeus_frames.py. */
   frame: string;
   color: string;
-  /** Halo opacity. The only real glow in the design. */
+  /** Contact-shadow opacity under the mascot. Kept deliberately low: this is a
+   *  grounding shadow, not a halo. See the draw call in `mochi.ts`. */
   glow: number;
   tint: number;
-  badge: BadgeKind;
+  /** Human-readable state name, shown next to the mascot in the header so the
+   *  pose is legible as words and not only as a picture. */
+  label: string;
   /** Looping vertical hop. */
   bounces: boolean;
   /** Eyes sweep left→right. */
@@ -78,9 +80,9 @@ export const COLORS = {
 
 const base: Omit<ZeusStateCfg, "frame"> = {
   color: COLORS.idle,
-  glow: 0.15,
+  glow: 0.05,
   tint: 0,
-  badge: "none",
+  label: "Idle",
   bounces: false,
   scans: false,
   breathes: false,
@@ -101,99 +103,100 @@ export const BOT_STATES: Record<ZeusBotState, ZeusStateCfg> = {
     ...base,
     frame: "working.png",
     color: COLORS.working,
-    glow: 0.65,
+    glow: 0.07,
     tint: 0.72,
-    badge: "dots",
+    label: "Working",
   },
   thinking: {
     ...base,
     frame: "thinking.png",
     color: COLORS.thinking,
-    glow: 0.65,
+    glow: 0.07,
     tint: 0.72,
-    badge: "dots",
+    label: "Thinking",
     look: [0.55, 0.55],
   },
   searching: {
     ...base,
     frame: "look_right.png",
     color: COLORS.searching,
-    glow: 0.65,
+    glow: 0.07,
     tint: 0.72,
-    badge: "dots",
+    label: "Searching",
     scans: true,
   },
   approval: {
     ...base,
     frame: "waiting_aproval.png",
     color: COLORS.approval,
-    glow: 0.65,
+    glow: 0.07,
     tint: 0.78,
-    badge: "bang",
+    label: "Waiting for you",
     bounces: true,
   },
   question: {
     ...base,
     frame: "waiting_aproval.png",
     color: COLORS.question,
-    glow: 0.65,
+    glow: 0.07,
     tint: 0.75,
-    badge: "question",
+    label: "Needs an answer",
     tilt: 0.17,
   },
   error: {
     ...base,
     frame: "error.png",
     color: COLORS.error,
-    glow: 0.65,
+    glow: 0.07,
     tint: 0.78,
-    badge: "dot",
+    label: "Failed",
     amplitude: 0.94,
   },
   finished: {
     ...base,
     frame: "blink.png",
     color: COLORS.finished,
-    glow: 0.65,
+    glow: 0.07,
     tint: 0.35,
-    badge: "dot",
+    label: "Done",
     amplitude: 1.04,
   },
   sleeping: {
     ...base,
     frame: "sleep.png",
     color: COLORS.sleeping,
-    glow: 0.15,
+    glow: 0.05,
     tint: 0.32,
     breathes: true,
     zz: true,
+    label: "Sleeping",
     amplitude: 0.96,
   },
   interrupted: {
     ...base,
     frame: "error.png",
     color: COLORS.interrupted,
-    glow: 0.65,
+    glow: 0.07,
     tint: 0.7,
-    badge: "dot",
+    label: "Disconnected",
     amplitude: 0.95,
   },
   dizzy: {
     ...base,
     frame: "error.png",
     color: COLORS.dizzy,
-    glow: 0.75,
+    glow: 0.08,
     tint: 0.7,
-    badge: "dot",
+    label: "Stuck",
     amplitude: 0.95,
   },
   love: {
     ...base,
     frame: "blink.png",
     color: COLORS.love,
-    glow: 0.85,
+    glow: 0.09,
     tint: 0.4,
-    badge: "none",
+    label: "Happy",
     amplitude: 1.06,
     bounces: true,
   },
