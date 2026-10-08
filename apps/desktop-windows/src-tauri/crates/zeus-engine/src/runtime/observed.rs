@@ -165,16 +165,24 @@ impl ObservedDriver {
             if let Some(usage) = metadata.get("usage") {
                 event = event.with_field("usage", usage.clone());
             }
-            event = event.with_field("agent_id", json!(hook.agent_id));
-            if !hook.model.is_empty() {
-                event = event.with_field("model", json!(hook.model));
-            }
-            if !hook.provider.is_empty() {
-                event = event.with_field("provider", json!(hook.provider));
-            }
-            if !hook.project.is_empty() {
-                event = event.with_field("project", json!(hook.project));
-            }
+        }
+        // Who is speaking, and about what. These four used to sit inside the
+        // `metadata` block above, which meant a hook that reported a plain
+        // tool event — the common case, and the one with nothing to put in
+        // metadata — arrived with no agent_id, model, provider or project. The
+        // panel then titled every session with its runtime name, because
+        // `project` was empty and `s.project || s.runtime` fell through. An
+        // identity field is not metadata; it does not belong behind a payload
+        // that has every reason to be absent.
+        event = event.with_field("agent_id", json!(hook.agent_id));
+        if !hook.model.is_empty() {
+            event = event.with_field("model", json!(hook.model));
+        }
+        if !hook.provider.is_empty() {
+            event = event.with_field("provider", json!(hook.provider));
+        }
+        if !hook.project.is_empty() {
+            event = event.with_field("project", json!(hook.project));
         }
         Some(event)
     }

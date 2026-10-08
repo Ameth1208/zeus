@@ -9,19 +9,20 @@
 // the single action sits out of its way on the right.
 
 import type { Session } from "../zeus/frames";
-import { getAgentIcon } from "./icons";
+import { markSvg, brandColor } from "./runtime-marks";
 import { svg } from "./dom";
+import { ICONS } from "./icons";
 import { esc, STATUS_COLORS } from "./state";
 import { currentTouchedFile } from "./working";
 
-export function renderSessionRow(s: Session, focusedId: string): string {
+export function renderSessionRow(s: Session, focusedId: string, history = false): string {
   const color = STATUS_COLORS[s.status] ?? "#8e939c";
   const focused = s.id === focusedId;
   const touched = currentTouchedFile(s.id);
 
   return `
-    <div class="session-row${focused ? " focused" : ""}" data-act="focus-session" data-id="${esc(s.id)}">
-      <span class="session-avatar" style="color:${color};">${svg(getAgentIcon(s.runtime || "agent"), 15).outerHTML}</span>
+    <div class="session-row${focused ? " focused" : ""}${history ? " history" : ""}" data-act="focus-session" data-id="${esc(s.id)}">
+      <span class="session-avatar" style="color:${brandColor(s.runtime)};">${markSvg(s.runtime || "agent", 15, `r${s.id}`) || `<span style="color:${color}">${svg(ICONS.ellipsis, 13).outerHTML}</span>`}</span>
       <span class="session-row-body">
         <span class="session-row-title">${esc(s.project || s.runtime || "session")}</span>
         <span class="session-row-detail">
@@ -54,12 +55,20 @@ export function statsStrip(sessions: Session[]): string {
   const working = sessions.filter((s) => s.status === "working").length;
   const waiting = sessions.filter((s) => s.status === "waiting").length;
   const done = sessions.filter((s) => s.status === "completed").length;
+  // `stale` is reported separately rather than folded into `working`. It used to
+  // be counted as neither, so a list of four ACTIVE rows sat above a strip
+  // reading "0 working" — the strip and the list answered different questions
+  // and both looked right on their own. A session that went quiet is the thing
+  // a user most needs to notice, so hiding it behind a zero was the worst of
+  // the three options.
+  const stale = sessions.filter((s) => s.status === "stale").length;
   let tokens = 0;
   for (const s of sessions) tokens += (s.usage?.input ?? 0) + (s.usage?.output ?? 0);
 
   const parts = [
     count(working, "working", "#3B82F6"),
     waiting > 0 ? count(waiting, "waiting", "#F5A524") : "",
+    stale > 0 ? count(stale, "not responding", "#6b7079") : "",
     done > 0 ? count(done, "done", "#22C55E") : "",
     tokens > 0 ? `<span class="home-stat"><b>${fmt(tokens)}</b>&nbsp;tokens</span>` : "",
   ];

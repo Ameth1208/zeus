@@ -11,12 +11,13 @@
 
 import type { Session } from "../zeus/frames";
 import { describeEvent } from "../zeus/frames";
-import { ViewData, can, esc, fmtTokens, STATUS_COLORS, type EventItem } from "./state";
+import { ViewData, activityKindColor, can, esc, fmtTokens, STATUS_COLORS, type EventItem } from "./state";
+import { ICONS } from "./icons";
+import { svg } from "./dom";
 
 export function renderWorkPanel(f: Session): string {
   const runtimeLabel = f.runtime || "agent";
   const model = f.model || "default";
-  const isWaiting = f.status === "waiting";
   const isApproval = f.last_event === "permission.requested";
   const isInput = f.last_event === "input.requested";
   const tool = f.last_event === "tool.started" ? "tool" : "";
@@ -30,18 +31,23 @@ export function renderWorkPanel(f: Session): string {
   const ended =
     f.status === "completed" || f.status === "failed" || f.status === "stopped" || f.status === "stale";
   const lastEvent = lastEventFor(f.id);
-  const outcome = ended && lastEvent && !isSessionActive(lastEvent.type) ? lastEvent : null;
+
+  const changes = changedFiles(f.id);
 
   return `
-    <!-- [mascot] [runtime · model ............ status]
-         No runtime icon in the chip. The mascot is the runtime — it is drawn
-         from that CLI's own glyph, larger, right there. A second icon beside it
-         repeated the same information and left a gap in the middle, which is
-         what made this read as two avatars.
+    <!-- One line of identity, then the agent's output as plain text on the
+         card.
 
-         The panel indents by --content-gutter, which layout.ts publishes from
-         the mascot's own position. The two used to be independent numbers, and
-         that is how the text came to run under the dog. -->
+         The framed box this replaced was the problem. A border, a fill and a
+         radius inside a panel that is already bounded by its own hairline reads
+         as a card inside a card: two outlines competing for the same edge. The
+         upstream reference puts this content straight onto the card with no
+         container at all, and the hierarchy comes from type and space instead
+         of from a second frame.
+
+         The indent still comes from --content-gutter, which layout.ts publishes
+         from the mascot's position. Upstream hardcodes 108px; deriving it is
+         what keeps the text off the dog when the diameter changes. -->
     <div class="agent-work-panel">
       <div class="work-header-row">
         <div class="work-agent-chip">
@@ -54,30 +60,152 @@ export function renderWorkPanel(f: Session): string {
         </span>
       </div>
 
-      <div class="work-detail-box${ended ? " ended" : ""}">
-        <!-- The file, above the message. It is the first thing worth knowing
-             while an agent works, and buried under the message the panel read
-             as "something is happening" with no subject. Line number only when
-             the hook supplied one — a file with no position is normal. -->
+      <div class="work-output">
+        ${touched ? renderCurrentFile(touched) : ""}
+        ${ended ? `<div class="work-outcome">${esc(outcomeText(f.status))}</div>` : ""}
         ${
-          touched
-            ? `<div class="work-file" title="${esc(touched.fullPath)}">
-          <span class="work-file-verb">${esc(touched.change || "editing")}</span>
-          <span class="work-file-path">${esc(touched.file)}</span>
-          ${touched.line ? `<span class="work-file-line">:${touched.line}</span>` : ""}
-        </div>`
+          !ended
+            ? `<div class="work-tool-line">${esc((f.last_event ?? "session").replace(/\./g, " "))}${tool ? ` <span>${esc(tool)}</span>` : ""}</div>
+               <div class="work-msg-line">${esc(lastEvent?.message ?? describeEvent(f))}</div>`
             : ""
         }
-        ${outcome ? `<div class="work-outcome">${esc(outcomeText(f.status))}</div>` : ""}
-        ${tool ? `<div class="work-tool-line"><span>tool</span>${esc(tool)}</div>` : ""}
-        <div class="work-msg-line">${esc(f.message || describeEvent(f))}</div>
-        ${usageLine(f)}
-        <!-- Ticker mounted here -->
-        <div id="ticker-mount" class="work-ticker"></div>
+        ${renderLiveLog(f.id, ended)}
       </div>
 
+      ${renderChanges(changes, ended)}
+
+      <!-- Ticker mounted here; it is the live half of this panel and the reason
+           the card is tall enough to need scrolling. -->
+      <div id="ticker-mount" class="work-ticker"></div>
+
+      ${usageLine(f)}
       <div class="work-actions-row">${renderWorkActions(f, isApproval, isInput)}</div>
+      ${ViewData.error ? `<div class="inline-error work-error">${esc(ViewData.error)}</div>` : ""}
+      ${renderComposer(f)}
     </div>`;
+}
+
+/** The focused session, full width. Opening a session from View is a request
+ *  to watch that one agent, so it gets the island's whole width rather than
+ *  the overview's left column squeezed beside the session list. */
+export function renderSessionView(): string {
+  const f = ViewData.focus ?? ViewData.sessions[0];
+  if (!f) {
+    return `<div class="view on"><div class="card"><div class="card-body"><div class="sub">No session selected.</div></div></div></div>`;
+  }
+  return `
+    <div class="view on">
+      <div class="card">
+        <div class="card-body session-detail">
+          <!-- This view is the only layout that takes the island's whole width,
+               so it is also the only one where the header's home icon is the
+               sole way out. On a full-width panel that icon stops reading as
+               navigation, and a user who opened a session by clicking View had
+               no visible way back to the list. The button sits in the panel,
+               next to the runtime it describes, so leaving is never a guess. -->
+          <button class="work-back" data-act="back-to-overview" title="Back to all agents" aria-label="Back to all agents">
+            ${svg(ICONS.chevronLeft, 12).outerHTML}
+            <span>All agents</span>
+          </button>
+          ${renderWorkPanel(f)}
+        </div>
+      </div>
+    </div>`;
+}
+
+/** Every file the focused session touched, deduped with the newest action
+ *  winning. This is the answer to "did it actually modify anything, and what"
+ *  — the question a finished session used to leave unanswered.
+ *
+ *  Reads the focused history fetched from the engine store rather than the
+ *  live-only buffer, so the list survives a webview reload. When the history
+ *  belongs to another session (a focus switch mid-fetch) it falls back to the
+ *  live buffer rather than showing the wrong session's files. */
+interface ChangedFile {
+  file: string;
+  fullPath: string;
+  line?: number;
+  verb: string;
+}
+
+function changedFiles(sessionId: string): ChangedFile[] {
+  const source =
+    ViewData.focusEventsFor === sessionId
+      ? ViewData.focusEvents
+      : ViewData.events.filter((e) => e.session_id === sessionId);
+  const byPath = new Map<string, ChangedFile>();
+  for (const ev of source) {
+    if (!FILE_ACTIVITY.has(ev.type) || !ev.path) continue;
+    const parts = ev.path.split(/[\/\\]/);
+    // The newest event for a path replaces the earlier one: "edited" then
+    // "deleted" must read as deleted, not as two facts about one file.
+    byPath.set(ev.path, {
+      file: parts[parts.length - 1] || ev.path,
+      fullPath: ev.path,
+      line: ev.line,
+      verb: ev.change ?? ev.tool ?? "touched",
+    });
+  }
+  // Newest last in the map; render newest first, capped so a busy session
+  // cannot push the controls out of the island.
+  return [...byPath.values()].slice(-6).reverse();
+}
+
+/** The changed-files list. Only rendered when there is something to say —
+ *  an empty section header with nothing under it reads as a broken panel. */
+function renderChanges(changes: ChangedFile[], ended: boolean): string {
+  if (changes.length === 0) return "";
+  return `
+    <div class="work-changes">
+      <div class="work-changes-label">${ended ? "Changed" : "Changing"}</div>
+      ${changes
+        .map(
+          (c) => `
+        <div class="work-change-row" title="${esc(c.fullPath)}">
+          <span class="work-change-verb${verbTone(c.verb)}">${esc(c.verb)}</span>
+          <span class="work-change-path">${esc(c.file)}</span>
+          ${c.line ? `<span class="work-change-line">:${c.line}</span>` : ""}
+        </div>`,
+        )
+        .join("")}
+    </div>`;
+}
+
+/** Delete reads red, create reads green, everything else stays neutral. The
+ *  verb is the risk signal on the row, so it carries the only colour. */
+function verbTone(verb: string): string {
+  const v = verb.toLowerCase();
+  if (v.includes("delet") || v.includes("remov") || v.includes("fail")) return " danger";
+  if (v.includes("creat") || v.includes("writ") || v.includes("add")) return " added";
+  return "";
+}
+
+/** Talk to the focused agent without leaving home. This is the answer to the
+ *  launcher being the only place a task could be typed: a running session
+ *  takes its next instruction right here. Only rendered when the runtime
+ *  actually accepts input — a composer that cannot send is worse than none. */
+function renderComposer(f: Session): string {
+  if (!f.live || !can("send")) return "";
+  return `
+    <div class="work-compose chat-bar">
+      <input id="work-message" class="chat-input" type="text"
+        placeholder="Tell ${esc(f.runtime || "the agent")} what to do next…"
+        aria-label="Message for the agent" ${ViewData.busyAction === "send" ? "disabled" : ""} />
+      <button class="send-btn" data-act="send-message" title="Send" ${ViewData.busyAction ? "disabled" : ""}>
+        ${svg(ICONS.arrowUp, 13).outerHTML}
+      </button>
+    </div>`;
+}
+
+/** What the agent did to the file, in the right tense.
+ *
+ *  `edited` rather than `editing` once the session is over. The same word in both
+ *  states made a finished agent look like it was still mid-edit — which is the
+ *  opposite of what the status two lines above it says. */
+function fileVerb(touched: TouchedFile): string {
+  const verb = touched.change || (touched.done ? "edit" : "editing");
+  if (touched.done) return /e$/.test(verb) ? verb : `${verb}ed`;
+  return verb;
 }
 
 /// The row's status word. `stale` is spelled out rather than shown as `working`
@@ -135,6 +263,9 @@ export interface TouchedFile {
   fullPath: string;
   line?: number;
   change: string;
+  /** True when the session has ended: the file is what it did, not what it is
+   *  doing, and the verb has to say so. */
+  done: boolean;
 }
 
 const FILE_ACTIVITY: ReadonlySet<string> = new Set([
@@ -148,18 +279,31 @@ export function currentTouchedFile(sessionId: string): TouchedFile | null {
   if (mine.length === 0) return null;
 
   const newest = mine[mine.length - 1];
-  if (!isSessionActive(newest.type)) return null;
-  if (!newest.path && !FILE_ACTIVITY.has(newest.type)) return null;
+  const live = isSessionActive(newest.type);
 
-  for (let i = mine.length - 1; i >= 0; i--) {
-    const ev = mine[i];
+  // A finished session still gets its file. Suppressing it was wrong: the last
+  // file an agent touched is the record of what it actually did, and hiding it
+  // left a completed session with no subject at all — the panel said "Finished"
+  // about nothing in particular. What changes is the wording, not the presence.
+  if (!live) return lastFileOf(mine);
+  if (!newest.path && !FILE_ACTIVITY.has(newest.type)) return null;
+  return lastFileOf(mine);
+}
+
+/** The most recent file this session worked on, flagged with whether the session
+ *  is still live so the caller can pick the tense. */
+function lastFileOf(events: EventItem[]): TouchedFile | null {
+  const done = !isSessionActive(events[events.length - 1].type);
+  for (let i = events.length - 1; i >= 0; i--) {
+    const ev = events[i];
     if (!FILE_ACTIVITY.has(ev.type) || !ev.path) continue;
-    const parts = ev.path.split(/[\\/]/);
+    const parts = ev.path.split(/[\/]/);
     return {
       file: parts[parts.length - 1] || ev.path,
       fullPath: ev.path,
       line: ev.line,
       change: ev.change ?? ev.tool ?? "",
+      done,
     };
   }
   return null;
@@ -182,9 +326,49 @@ export function isSessionActive(eventType: string): boolean {
   );
 }
 
+/** The file locator: verb + path + line, in mono, because the reader is going
+ *  to go open it. The verb carries the tense, so a finished session says what
+ *  it did rather than what it is doing. */
+function renderCurrentFile(touched: TouchedFile): string {
+  return `<div class="work-file" title="${esc(touched.fullPath)}">
+    <span class="work-file-verb">${esc(fileVerb(touched))}</span>
+    <span class="work-file-path">${esc(touched.file)}</span>
+    ${touched.line ? `<span class="work-file-line">:${touched.line}</span>` : ""}
+  </div>`;
+}
+
+/** What the agent is doing, event by event, newest last. This is the answer
+ *  to "what is it doing exactly" — the headline above says the current thing,
+ *  this says the steps around it. Rows animate in via CSS because render()
+ *  rebuilds the panel on every engine event. */
+const LIVE_LOG_EVENTS = 6;
+
+function renderLiveLog(sessionId: string, ended: boolean): string {
+  const events = ViewData.events.filter((e) => e.session_id === sessionId).slice(-LIVE_LOG_EVENTS);
+  if (events.length === 0) {
+    // A quiet session with no log is a fact, not a blank: say so, or the
+    // panel reads as broken rather than as "nothing has happened".
+    return ended
+      ? `<div class="work-log-empty">No recent events — this session has gone quiet.</div>`
+      : "";
+  }
+  return `<div class="work-log">${events
+    .map((ev) => {
+      const detail = ev.message || ev.command || ev.path || ev.tool || "";
+      return `<div class="work-log-row">
+        <span class="act-dot" style="color:${activityKindColor(ev.type)}"></span>
+        <span class="work-log-kind">${esc(ev.type.replace(/\./g, " "))}</span>
+        ${detail ? `<span class="work-log-detail" title="${esc(detail)}">${esc(detail)}</span>` : ""}
+        <span class="work-log-time">${esc(ev.time)}</span>
+      </div>`;
+    })
+    .join("")}</div>`;
+}
+
 function outcomeText(status: string): string {
   if (status === "failed") return "Failed";
   if (status === "stopped") return "Stopped";
+  if (status === "stale") return "Not responding";
   return "Finished";
 }
 

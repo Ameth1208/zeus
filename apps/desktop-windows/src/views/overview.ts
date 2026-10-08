@@ -1,60 +1,62 @@
-// The home view: the focused session on the left, every session on the right.
+// The home view: the list of agents IS the screen.
 //
-// Deliberately thin. It is the two-column shell and nothing else — the work
-// panel is `working.ts`, each row is `session-row.ts`. That split is what lets
-// either half be restyled without reading the other, and it is why this file
-// stayed short while the panel it once inlined grew past a hundred lines.
+// It used to split the island in two — work panel left, session list right —
+// which squeezed the list into a 226px column and repeated in the panel what
+// the session view shows full-width. Now the overview is the list alone: every
+// session, its state, the file it is touching, and a View button that opens
+// the session view, where the detail lives.
+//
+// The mascot still owns its column on the left (the gutter is published by
+// layout.ts as --content-gutter), so no row ever runs under it.
 
 import { ViewData } from "./state";
 import { renderEmptyView } from "./empty";
-import { renderWorkPanel, isSessionActive } from "./working";
 import { renderSessionRow, statsStrip } from "./session-row";
 
+function isLiveStatus(status: string): boolean {
+  return status === "working" || status === "waiting";
+}
+
 export function renderOverviewView(): string {
-  const f = ViewData.focus ?? (ViewData.sessions.length > 0 ? ViewData.sessions[0] : null);
-  if (!f) return renderEmptyView();
+  const live = ViewData.sessions.filter((s) => isLiveStatus(s.status));
+  const history = ViewData.sessions.filter((s) => !isLiveStatus(s.status));
+  const focusedId = ViewData.focus?.id ?? "";
+
+  if (ViewData.sessions.length === 0) {
+    return renderEmptyView();
+  }
 
   return `
-    <div class="view overview on">
-      <div class="left">
-        <div class="card">
-          <div class="card-body">${renderWorkPanel(f)}</div>
-        </div>
-      </div>
-      <div class="right">
-        <div class="card">
-          <div class="card-body home-sessions">
-            <div class="home-stats">${statsStrip(ViewData.sessions)}</div>
-            <div class="home-session-list">
-              ${ViewData.sessions.map((s) => renderSessionRow(s, f.id)).join("")}
-            </div>
+    <div class="view on">
+      <div class="card">
+        <div class="card-body home-sessions">
+          <div class="home-stats">${statsStrip(ViewData.sessions)}</div>
+          <div class="home-session-list">
+            ${live.length > 0 ? `<div class="home-section-label">Active</div>` : ""}
+            ${live.map((s) => renderSessionRow(s, focusedId)).join("")}
+            ${history.length > 0 ? `<div class="home-section-label">Recent</div>` : ""}
+            ${history.map((s) => renderSessionRow(s, focusedId, true)).join("")}
           </div>
         </div>
       </div>
     </div>`;
 }
 
-/** Move the focus off a session that has stopped doing anything.
- *
- *  When the agent you were watching finishes, the panel keeps showing it — so
- *  "task done" reads as "task still running", and whatever the other agents are
- *  doing stays hidden behind a dead session. On every refresh, if the focused
- *  session is no longer active, hand focus to whatever else is actually
- *  working.
- *
- *  Order is deliberate: something genuinely working beats something merely
- *  unfinished, and a stale session never wins. */
+/// After a decision (or when a session disappears) drop focus back to the most
+/// relevant session so the panel doesn't go blank.
+///
+/// Focus survives a session going quiet on purpose: clearing it the moment a
+/// session stopped being live yanked the session view out from under the user
+/// who had just opened it — the panel fell back to "watching your CLIs" while
+/// they were reading it. Focus only moves when the session is actually gone.
 export function refocusIfIdle(): void {
-  const current = ViewData.focus;
-  if (!current || isActiveStatus(current.status)) return;
-  const others = ViewData.sessions.filter((s) => s.id !== current.id);
+  const focused = ViewData.focus;
+  if (focused && ViewData.sessions.some((s) => s.id === focused.id)) {
+    return;
+  }
   const next =
-    others.find((s) => s.status === "working") ??
-    others.find((s) => s.status === "waiting") ??
-    others.find((s) => isActiveStatus(s.status));
-  if (next) ViewData.focus = next;
-}
-
-function isActiveStatus(status: string): boolean {
-  return status === "working" || status === "waiting";
+    ViewData.sessions.find((s) => s.status === "waiting") ??
+    ViewData.sessions.find((s) => s.status === "working") ??
+    null;
+  ViewData.focus = next;
 }

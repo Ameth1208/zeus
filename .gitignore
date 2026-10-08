@@ -8,6 +8,8 @@
 **/node_modules/
 **/dist/
 !dist/gateway/
+# Local run state: gateway auth/session stores and logs from a dev launch.
+.run/
 **/target/
 .DS_Store
 *.xcuserstate

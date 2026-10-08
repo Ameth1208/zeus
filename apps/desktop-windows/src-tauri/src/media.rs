@@ -45,21 +45,99 @@ impl MediaCommand {
 #[cfg(windows)]
 mod imp {
     use super::{MediaCommand, NowPlaying};
+    use std::sync::{Mutex, OnceLock};
     use windows::Media::Control::{
         GlobalSystemMediaTransportControlsSessionManager as Manager,
         GlobalSystemMediaTransportControlsSessionPlaybackStatus as PlaybackStatus,
     };
 
-    fn session_manager() -> Result<Manager, String> {
-        Manager::RequestAsync()
-            .map_err(|e| e.to_string())?
-            .get()
-            .map_err(|e| e.to_string())
+    /// The cached manager, rebuilt on demand when it stops seeing sessions.
+    ///
+    /// `RequestAsync` used to run on every read, which was fine at the original
+    /// four-second heartbeat but not at the media view's 1.5 s one: each call
+    /// asks the OS for a fresh GSMTC session manager, and constructing one while
+    /// a previous one is still alive is the documented way to get one that fails
+    /// to enumerate sessions. So the manager is kept rather than rebuilt.
+    ///
+    /// Caching forever has the opposite failure, and it is the one that bit: a
+    /// manager requested while nothing was playing can hold an empty session
+    /// list for the life of the process, so music started later never appears.
+    /// Hence `rebuild`. A cached manager that finds nothing is treated as
+    /// possibly stale, not as "nothing is playing" — the only reading that is
+    /// safe to be wrong about.
+    fn manager_slot() -> &'static Mutex<Option<Manager>> {
+        static SLOT: OnceLock<Mutex<Option<Manager>>> = OnceLock::new();
+        SLOT.get_or_init(|| Mutex::new(None))
+    }
+
+    /// Runs `read` against the cached manager, rebuilding it once if `read`
+    /// reports no current session. The retry is what makes the cache safe: it
+    /// costs one extra `RequestAsync` only in the case that would otherwise be
+    /// the wrong answer forever.
+    fn request_manager() -> Option<Manager> {
+        match Manager::RequestAsync() {
+            Ok(op) => op.get().ok(),
+            Err(_) => None,
+        }
+    }
+
+    use windows::Media::Control::GlobalSystemMediaTransportControlsSession as Session;
+
+    /// Picks the session to show. `GetCurrentSession()` alone is not enough:
+    /// it regularly returns nothing while sessions exist (Chrome can publish a
+    /// session without ever becoming "current"), which looked like "no music"
+    /// while something was audibly playing. Enumerating and preferring the one
+    /// that is actually playing answers the question the view asks.
+    fn pick_session(manager: &Manager) -> Option<Session> {
+        if let Ok(current) = manager.GetCurrentSession() {
+            if let Ok(info) = current.GetPlaybackInfo() {
+                if info
+                    .PlaybackStatus()
+                    .map(|s| s == PlaybackStatus::Playing)
+                    .unwrap_or(false)
+                {
+                    return Some(current);
+                }
+            }
+        }
+        let sessions = manager.GetSessions().ok()?;
+        let mut fallback: Option<Session> = None;
+        for session in sessions.into_iter() {
+            let playing = session
+                .GetPlaybackInfo()
+                .and_then(|i| i.PlaybackStatus())
+                .map(|s| s == PlaybackStatus::Playing)
+                .unwrap_or(false);
+            if playing {
+                return Some(session);
+            }
+            if fallback.is_none() {
+                fallback = Some(session);
+            }
+        }
+        fallback
+    }
+
+    fn with_session<T>(read: impl Fn(&Manager) -> Option<T>) -> Option<T> {
+        let slot = manager_slot();
+        {
+            let mut guard = slot.lock().unwrap_or_else(|e| e.into_inner());
+            if guard.is_none() {
+                *guard = request_manager();
+            }
+            if let Some(found) = guard.as_ref().and_then(|m| read(m)) {
+                return Some(found);
+            }
+        }
+        // Nothing from the cached manager. Rebuild once — a long-lived manager
+        // that was requested before any session existed cannot see one.
+        let mut guard = slot.lock().unwrap_or_else(|e| e.into_inner());
+        *guard = request_manager();
+        guard.as_ref().and_then(|m| read(m))
     }
 
     pub fn now_playing() -> Result<NowPlaying, String> {
-        let manager = session_manager()?;
-        let Ok(session) = manager.GetCurrentSession() else {
+        let Some(session) = with_session(|m| pick_session(m)) else {
             return Ok(NowPlaying::default());
         };
         let props = session
@@ -186,8 +264,8 @@ mod imp {
     }
 
     pub fn control(command: MediaCommand) -> Result<(), String> {
-        let manager = session_manager()?;
-        let session = manager.GetCurrentSession().map_err(|e| e.to_string())?;
+        let session = with_session(|m| pick_session(m))
+            .ok_or_else(|| "no media session is playing".to_string())?;
         let result = match command {
             MediaCommand::PlayPause => session.TryTogglePlayPauseAsync(),
             MediaCommand::Next => session.TrySkipNextAsync(),

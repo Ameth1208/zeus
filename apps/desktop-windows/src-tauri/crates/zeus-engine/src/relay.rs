@@ -29,6 +29,7 @@ use crate::gateway::{Endpoint, LinkState};
 use crate::permission::DecisionError;
 use crate::ZeusEngine;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -53,6 +54,10 @@ struct GatewayEvent {
     runtime: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     project: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    provider: Option<String>,
     #[serde(rename = "type")]
     kind: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -361,7 +366,21 @@ fn to_gateway_event(event: &ZeusEvent, workstation: &str, capabilities: &[String
         session_id: event.session_id.clone(),
         agent_id: event.session_id.clone(),
         runtime: event.runtime.clone(),
-        project: None,
+        project: event
+            .payload
+            .get("project")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        model: event
+            .payload
+            .get("model")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        provider: event
+            .payload
+            .get("provider")
+            .and_then(Value::as_str)
+            .map(str::to_string),
         kind: event.kind.as_str().to_string(),
         message: (event.kind != EventKind::AgentThinking).then(|| event.summary()),
         tool: (!event.tool().is_empty()).then(|| event.tool().to_string()),

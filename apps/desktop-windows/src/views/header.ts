@@ -13,7 +13,7 @@ export function renderHeader(activeView: IslandViewName): string {
   return `
     <div id="header">
       <div class="tabs">
-        <button class="tab icon-only ${activeView === "overview" || activeView === "empty" ? "on" : ""}" data-nav="overview" title="Agents" aria-label="Agents">
+        <button class="tab icon-only ${activeView === "overview" || activeView === "empty" || activeView === "session" ? "on" : ""}" data-nav="overview" title="Agents" aria-label="Agents">
           ${svg(ICONS.house, 15).outerHTML}
         </button>
         <button class="tab icon-only ${activeView === "prompt" ? "on" : ""}" data-nav="prompt" title="Activity" aria-label="Activity">

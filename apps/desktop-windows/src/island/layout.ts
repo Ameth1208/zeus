@@ -5,6 +5,7 @@ export type IslandMode = "hidden" | "compact" | "expanded";
 
 export type IslandViewName =
   | "overview"
+  | "session"
   | "empty"
   | "approval"
   | "question"
@@ -54,22 +55,24 @@ export const WAKE_STRIP_H = 12;
 // Heights measured against real content: a view that shows buttons must have
 // room for them plus breathing space. A view too short squeezes text over the
 // mascot; too tall floats the island in empty wash.
-// The mascot carries the state in every view, so it gets the size budget the
-// content can spare. Diameters grew ~20% over the previous pass because at
-// 46-58px the frames lost their silhouettes at island scale and the panel read
-// as empty space with a small drawing in it. Each value stays inside
+// Mascot diameters stay small where a view is for reading (the overview is
+// the extreme: 52px, a quarter of the card) and larger only where the dog is
+// the message — empty, approval, terminal. Each value stays inside
 // `botX + diameter/2 + BOT_GUTTER_MARGIN` so no layout ever overlaps content.
 export const VIEW_LAYOUTS: Record<IslandViewName, ViewLayout> = {
-  // The mascot is the runtime's identity on this panel, so it is sized like a
-  //  primary element rather than an ornament: 80px in a 244px view.
-  //
-  //  `botY` is explicit because the derived centre — the old `cardH = 84` fudge
-  //  in `botPosition` — put the dog in the middle of the panel while the name it
-  //  labels sits on the top row. The row's centre is ~62px from the island top,
-  //  and an 80px mascot centred there would reach 22px and slide under the 42px
-  //  header. Centred at 88 instead: its top edge lands at 48, clear of the
-  //  header, and it reads as sitting beside the name rather than floating.
-  overview: { height: 244, botX: 78, botY: 88, botDiameter: 80, agentMode: "pills", wash: null },
+  // The overview is the session list alone — detail moved to the session view,
+  //  which gets the island's whole width when a row's View button is pressed.
+  //  The mascot keeps a small footprint at the left (52px, an 88px gutter) so
+  //  no row slides under it, and the list gets the rest. 296px fits the stats
+  //  strip plus about five rows; the rest scrolls.
+  overview: { height: 296, botX: 50, botY: 76, botDiameter: 52, agentMode: "pills", wash: null },
+  // One session, full width. Opening a session from View is a request to
+  //  watch that one agent, so it gets the island's whole width — the mascot
+  //  keeps the same 52px / botX 50 footprint as the overview (88px gutter)
+  //  and the work panel's content column grows from ~250px to ~540px, which
+  //  is where the live log and the changed-files list become readable. The
+  //  full VIEW_MAX_H: the log is the point of the view and it scrolls.
+  session: { height: 318, botX: 50, botY: 76, botDiameter: 52, agentMode: "column", wash: null },
   empty: { height: 168, botX: 76, botY: null, botDiameter: 76, agentMode: "none", wash: null },
   // Approval carries two buttons and a command line; give it the most room.
   approval: { height: 204, botX: 70, botY: null, botDiameter: 70, agentMode: "column", wash: "rgba(245,165,36,0.38)" },

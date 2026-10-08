@@ -64,7 +64,15 @@ export const ViewData = {
   gatewayUrl: localStorage.getItem("zeus_gateway_url") || "http://127.0.0.1:8080",
   gatewayToken: localStorage.getItem("zeus_gateway_token") || "local-dev",
   launchRuntime: "",
+  /// Bound to the task textarea. Without this the field is rebuilt empty on
+  /// every refresh tick and the user cannot type a sentence — the heartbeat runs
+  /// every 4s, so a one-line prompt was all that ever survived.
+  launchPrompt: "",
   launchCwd: localStorage.getItem("zeus_launch_cwd") || "",
+  /** Session id of a working agent the launcher will send the task to instead
+   *  of launching a new one. Only ever points at a live session that
+   *  advertises `send`; the launcher re-validates it on every render. */
+  launchTarget: null as string | null,
   media: {
     available: false,
     title: "",
@@ -77,8 +85,22 @@ export const ViewData = {
   } as NowPlaying,
   busyAction: "" as "" | "launch" | "send" | "save-gateway",
   menuOpen: false,
+  /// True while a file is dragged over the launcher, so the drop target can
+  /// light up. Nothing is written until the drop actually happens.
+  dropActive: false,
+  /// The runtime picker popover. Separate from `menuOpen`: that one is the
+  /// header's overflow menu, this one belongs to the launcher.
+  runtimeMenuOpen: false,
   error: "",
   events: [] as EventItem[],
+  /** Recent events of the focused session, pulled from the engine store on
+   *  refresh. `events` above only accumulates what the live bus delivered
+   *  since the webview booted — after a reload it is empty, and the work
+   *  panel's "what changed" list would have nothing to show. */
+  focusEvents: [] as EventItem[],
+  /** Session id `focusEvents` belongs to, so a stale fetch is never rendered
+   *  against a session the user has since switched away from. */
+  focusEventsFor: "",
   ticker: new Ticker(),
 };
 

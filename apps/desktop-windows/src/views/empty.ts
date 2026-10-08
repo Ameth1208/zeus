@@ -1,7 +1,7 @@
 // No sessions yet. Also the fallback for approval and overview when their
 // session list is empty, which is why it lives in its own module.
 
-import { getAgentIcon, runtimeColor } from "./icons";
+import { markSvg, brandColor } from "./runtime-marks";
 import { svg } from "./dom";
 import { ViewData, esc } from "./state";
 
@@ -12,14 +12,14 @@ export function renderEmptyView(): string {
           .map((entry) => {
             const id = entry.info.id;
             // Runtime brand colour, not a project hash — see `runtimeColor`.
-            const color = runtimeColor(id);
+            const color = brandColor(id);
             // `entry.installed`, which the host answers for every runtime
             // including observed-only ones. Reading `managed?.installed` made
             // OpenCode look absent purely because Zeus cannot drive it.
             const installed = entry.installed;
             return `<button class="empty-agent" ${installed ? `data-act="choose-runtime" data-runtime="${esc(id)}"` : "disabled"}
               style="${installed ? "" : "opacity:0.45;cursor:default;"}" title="${esc(entry.info.label)}${installed ? "" : " — not installed"}">
-              <span style="color:${color}; display:flex;">${svg(getAgentIcon(id), 20).outerHTML}</span>
+              <span class="empty-agent-mark">${markSvg(id, 20, `e${id}`)}</span>
               <span>${esc(entry.info.label)}</span>
             </button>`;
           })
